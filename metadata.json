@@ -1,0 +1,8 @@
+{
+  "name": "Remix: CBT Ujian Online",
+  "description": "Portal ujian dan seleksi komputerisasi online mandiri (CBT) STUDIODHS lengkap dengan dashboard admin proctor terintegrasi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
