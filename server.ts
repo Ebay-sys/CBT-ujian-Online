@@ -5,11 +5,75 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { Server as HttpServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import fs from "fs";
+import { initializeApp } from "firebase/app";
+import { 
+  getFirestore, 
+  collection, 
+  getDocs, 
+  setDoc, 
+  getDoc,
+  doc, 
+  deleteDoc 
+} from "firebase/firestore";
+import { 
+  INITIAL_PACKAGES, 
+  INITIAL_QUESTIONS, 
+  INITIAL_UPDATES, 
+  INITIAL_HISTORY, 
+  INITIAL_PARTICIPANTS, 
+  INITIAL_SCHEDULES, 
+  INITIAL_ACCOUNTS 
+} from "./src/data";
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+
+// Load Firebase Config
+const firebaseConfig = JSON.parse(
+  fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8")
+);
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: "SERVER",
+      email: "server@cbt.internal",
+      emailVerified: true,
+      isAnonymous: false,
+    },
+    operationType,
+    path
+  };
+  console.error('[Firestore Error]: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 // Create HTTP server wrapping the Express app to support dual HTTP + WebSockets on port 3000
 const httpServer = new HttpServer(app);
@@ -23,6 +87,7 @@ const serverDbState: {
   participants: any[] | null;
   schedules: any[] | null;
   accounts: any[] | null;
+  activityLogs: any[] | null;
   serverTimeConfig: { useManualTime: boolean; offsetMs: number } | null;
 } = {
   packages: null,
@@ -32,6 +97,7 @@ const serverDbState: {
   participants: null,
   schedules: null,
   accounts: null,
+  activityLogs: null,
   serverTimeConfig: null,
 };
 
@@ -65,6 +131,7 @@ wss.on("connection", (ws) => {
           if (state.participants) serverDbState.participants = state.participants;
           if (state.schedules) serverDbState.schedules = state.schedules;
           if (state.accounts) serverDbState.accounts = state.accounts;
+          if (state.activityLogs) serverDbState.activityLogs = state.activityLogs;
           if (state.serverTimeConfig) serverDbState.serverTimeConfig = state.serverTimeConfig;
           initialized = true;
           console.log("Server real-time state initialized from connected client data model.");
@@ -81,6 +148,7 @@ wss.on("connection", (ws) => {
             participants: serverDbState.participants,
             schedules: serverDbState.schedules,
             accounts: serverDbState.accounts,
+            activityLogs: serverDbState.activityLogs,
             serverTimeConfig: serverDbState.serverTimeConfig,
           }
         }));
@@ -100,6 +168,13 @@ wss.on("connection", (ws) => {
           (serverDbState as any)[key] = data;
           console.log(`Real-time state updated on server key [${key}] with ${Array.isArray(data) ? data.length : "obj"} items`);
           
+          // Background sync to Firestore for cloud persistence
+          if (key === "serverTimeConfig") {
+            syncServerTimeConfigToFirestore(data);
+          } else {
+            syncCollectionToFirestore(key, data);
+          }
+
           // Broadcast to all other connections
           broadcastToOthers(ws, {
             type: "STATE_UPDATE",
@@ -577,8 +652,219 @@ Kembalikan respon murni terformat sebagai array JSON berisi tepat ${totalSoal} o
   }
 });
 
+// Sub-routine to sync local array to Firestore, resolving deletes
+async function syncCollectionToFirestore(collectionName: string, items: any[]) {
+  if (!items || !Array.isArray(items)) return;
+  try {
+    const querySnapshot = await getDocs(collection(db, collectionName));
+    const dbIds = new Set<string>();
+    querySnapshot.forEach((doc) => {
+      dbIds.add(doc.id);
+    });
+
+    const activeIds = new Set<string>();
+    for (const item of items) {
+      if (item && item.id) {
+        activeIds.add(item.id);
+        const ref = doc(db, collectionName, item.id);
+        await setDoc(ref, item);
+      }
+    }
+
+    // Delete elements from DB that do not exist anymore in memory (to sync deletions)
+    for (const id of dbIds) {
+      if (!activeIds.has(id)) {
+        console.log(`[Firestore] Deleting orphaned document [${id}] from collection [${collectionName}]`);
+        await deleteDoc(doc(db, collectionName, id));
+      }
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, collectionName);
+  }
+}
+
+async function syncServerTimeConfigToFirestore(config: any) {
+  if (!config) return;
+  try {
+    const ref = doc(db, "config", "serverTime");
+    await setDoc(ref, config);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, "config/serverTime");
+  }
+}
+
+async function initServerStateFromFirestore() {
+  try {
+    console.log("[Firestore] Connecting and initializing system state from cloud database...");
+
+    // 1. Accounts
+    const accountsRef = "accounts";
+    try {
+      const snap = await getDocs(collection(db, accountsRef));
+      if (snap.empty) {
+        console.log("[Firestore] Accounts empty. Bootstrapping with default accounts.");
+        serverDbState.accounts = INITIAL_ACCOUNTS;
+        for (const item of INITIAL_ACCOUNTS) {
+          await setDoc(doc(db, accountsRef, item.id), item);
+        }
+      } else {
+        const list: any[] = [];
+        snap.forEach((doc) => list.push(doc.data()));
+        serverDbState.accounts = list;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, accountsRef);
+    }
+
+    // 2. Packages
+    const packagesRef = "packages";
+    try {
+      const snap = await getDocs(collection(db, packagesRef));
+      if (snap.empty) {
+        console.log("[Firestore] Packages empty. Bootstrapping with default packages.");
+        serverDbState.packages = INITIAL_PACKAGES;
+        for (const item of INITIAL_PACKAGES) {
+          await setDoc(doc(db, packagesRef, item.id), item);
+        }
+      } else {
+        const list: any[] = [];
+        snap.forEach((doc) => list.push(doc.data()));
+        serverDbState.packages = list;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, packagesRef);
+    }
+
+    // 3. Questions
+    const questionsRef = "questions";
+    try {
+      const snap = await getDocs(collection(db, questionsRef));
+      if (snap.empty) {
+        console.log("[Firestore] Questions empty. Bootstrapping with default questions.");
+        serverDbState.questions = INITIAL_QUESTIONS;
+        for (const item of INITIAL_QUESTIONS) {
+          await setDoc(doc(db, questionsRef, item.id), item);
+        }
+      } else {
+        const list: any[] = [];
+        snap.forEach((doc) => list.push(doc.data()));
+        serverDbState.questions = list;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, questionsRef);
+    }
+
+    // 4. Updates (Announcements)
+    const updatesRef = "updates";
+    try {
+      const snap = await getDocs(collection(db, updatesRef));
+      if (snap.empty) {
+        console.log("[Firestore] Updates empty. Bootstrapping.");
+        serverDbState.updates = INITIAL_UPDATES;
+        for (const item of INITIAL_UPDATES) {
+          await setDoc(doc(db, updatesRef, item.id), item);
+        }
+      } else {
+        const list: any[] = [];
+        snap.forEach((doc) => list.push(doc.data()));
+        serverDbState.updates = list;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, updatesRef);
+    }
+
+    // 5. Schedules
+    const schedulesRef = "schedules";
+    try {
+      const snap = await getDocs(collection(db, schedulesRef));
+      if (snap.empty) {
+        console.log("[Firestore] Schedules empty. Bootstrapping.");
+        serverDbState.schedules = INITIAL_SCHEDULES;
+        for (const item of INITIAL_SCHEDULES) {
+          await setDoc(doc(db, schedulesRef, item.id), item);
+        }
+      } else {
+        const list: any[] = [];
+        snap.forEach((doc) => list.push(doc.data()));
+        serverDbState.schedules = list;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, schedulesRef);
+    }
+
+    // 6. History (Reset and keep pristine status to prevent old student history records from persisting)
+    const historyRef = "history";
+    try {
+      const snap = await getDocs(collection(db, historyRef));
+      for (const snapDoc of snap.docs) {
+        await deleteDoc(doc(db, historyRef, snapDoc.id));
+      }
+      serverDbState.history = [];
+    } catch (e) {
+      console.warn("[Firestore] Failed to fully clear history on boot, falling back to empty array", e);
+      serverDbState.history = [];
+    }
+
+    // 7. Participants (Automatically cleaned up and reset on boot to ensure no stale student participant entries remain)
+    const participantsRef = "participants";
+    try {
+      const snap = await getDocs(collection(db, participantsRef));
+      for (const snapDoc of snap.docs) {
+        await deleteDoc(doc(db, participantsRef, snapDoc.id));
+      }
+      serverDbState.participants = [];
+    } catch (e) {
+      console.warn("[Firestore] Failed to fully clear participants on boot, falling back to empty array", e);
+      serverDbState.participants = [];
+    }
+
+    // 8. Activity logs
+    const activityLogsRef = "activityLogs";
+    try {
+      const snap = await getDocs(collection(db, activityLogsRef));
+      const list: any[] = [];
+      snap.forEach((doc) => list.push(doc.data()));
+      serverDbState.activityLogs = list;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, activityLogsRef);
+    }
+
+    // 9. Server Time Config
+    const timeRef = "config/serverTime";
+    try {
+      const docSnap = await getDoc(doc(db, "config", "serverTime"));
+      if (!docSnap.exists()) {
+        const defaultTime = { useManualTime: false, offsetMs: 0 };
+        await setDoc(doc(db, "config", "serverTime"), defaultTime);
+        serverDbState.serverTimeConfig = defaultTime;
+      } else {
+        serverDbState.serverTimeConfig = docSnap.data() as any;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, timeRef);
+    }
+
+    console.log("[Firestore] Database successfully loaded into memory.");
+  } catch (err) {
+    console.error("[Firestore] Heavy bootup initialization error. Using local fallbacks.", err);
+    // Safe memory fallbacks
+    serverDbState.packages = serverDbState.packages || INITIAL_PACKAGES;
+    serverDbState.questions = serverDbState.questions || INITIAL_QUESTIONS;
+    serverDbState.updates = serverDbState.updates || INITIAL_UPDATES;
+    serverDbState.history = serverDbState.history || [];
+    serverDbState.participants = serverDbState.participants || [];
+    serverDbState.schedules = serverDbState.schedules || INITIAL_SCHEDULES;
+    serverDbState.accounts = serverDbState.accounts || INITIAL_ACCOUNTS;
+    serverDbState.activityLogs = serverDbState.activityLogs || [];
+    serverDbState.serverTimeConfig = serverDbState.serverTimeConfig || { useManualTime: false, offsetMs: 0 };
+  }
+}
+
 // Setup Vite Dev Server / Static files handler
 async function serveApp() {
+  console.log("Loading cloud database content...");
+  await initServerStateFromFirestore();
+
   if (process.env.NODE_ENV !== "production") {
     console.log("Starting server in DEVELOPMENT mode with Vite Middleware...");
     const vite = await createViteServer({

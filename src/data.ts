@@ -213,31 +213,49 @@ export const INITIAL_ACCOUNTS: UserAccount[] = [
     role: "Admin",
     email: "admin.sdn14@singkawang.sch.id",
     status: "Aktif",
-    lastLogin: "Baru saja"
+    lastLogin: "Baru saja",
+    username: "admin14",
+    password: "user123"
   },
   {
     id: "acc-2",
-    name: "Hendra Wijaya",
-    role: "Pengawas",
+    name: "Hendra Wijaya, S.Pd",
+    role: "Guru",
     email: "hendra.guru@singkawang.sch.id",
     status: "Aktif",
-    lastLogin: "2 jam lalu"
+    lastLogin: "2 jam lalu",
+    username: "hendra",
+    password: "guru123"
   },
   {
     id: "acc-3",
-    name: "Shanti Puspita",
-    role: "Fasilitator",
+    name: "Ibu Shanti Puspita",
+    role: "Guru",
     email: "shanti.guru@singkawang.sch.id",
     status: "Aktif",
-    lastLogin: "1 hari lalu"
+    lastLogin: "1 hari lalu",
+    username: "shanti",
+    password: "guru123"
   },
   {
     id: "acc-4",
     name: "Sari Handayani",
     role: "Pengawas",
     email: "sari.proctor@singkawang.sch.id",
-    status: "Nonaktif",
-    lastLogin: "5 hari lalu"
+    status: "Aktif",
+    lastLogin: "5 hari lalu",
+    username: "sari",
+    password: "proctor123"
+  },
+  {
+    id: "acc-5",
+    name: "Pak Budi Hartono (Viewer)",
+    role: "Viewer",
+    email: "budi.viewer@singkawang.sch.id",
+    status: "Aktif",
+    lastLogin: "Baru saja",
+    username: "budi",
+    password: "viewer123"
   }
 ];
 

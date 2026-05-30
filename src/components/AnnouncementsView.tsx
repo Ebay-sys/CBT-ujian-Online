@@ -18,13 +18,15 @@ interface AnnouncementsViewProps {
   onAddUpdate: (update: SystemUpdate) => void;
   onTogglePinUpdate: (id: string) => void;
   onDeleteUpdate: (id: string) => void;
+  userRole?: string;
 }
 
 export default function AnnouncementsView({
   updates,
   onAddUpdate,
   onTogglePinUpdate,
-  onDeleteUpdate
+  onDeleteUpdate,
+  userRole
 }: AnnouncementsViewProps) {
   // Announcement Form States
   const [isAddingUpdate, setIsAddingUpdate] = useState(false);
@@ -35,6 +37,10 @@ export default function AnnouncementsView({
 
   const handleAddUpdateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (userRole === "viewer") {
+      alert("Akses Ditolak! Akun Viewer tidak diizinkan membuat pengumuman.");
+      return;
+    }
     if (!updateTitle.trim() || !updateContent.trim()) {
       alert("Judul dan konten tidak boleh kosong!");
       return;
@@ -70,13 +76,19 @@ export default function AnnouncementsView({
             <Megaphone size={16} className="text-red-600" />
             Siaran Update Pengumuman
           </h3>
-          {!isAddingUpdate && (
-            <button
-              onClick={() => setIsAddingUpdate(true)}
-              className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus size={14} /> Buat Siaran
-            </button>
+          {userRole === "viewer" ? (
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-100 px-2 py-1 rounded">
+              🔍 MODE BACA (VIEW-ONLY)
+            </span>
+          ) : (
+            !isAddingUpdate && (
+              <button
+                onClick={() => setIsAddingUpdate(true)}
+                className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus size={14} /> Buat Siaran
+              </button>
+            )
           )}
         </div>
 
@@ -170,22 +182,24 @@ export default function AnnouncementsView({
                     <span className="text-[10px] text-slate-400 font-mono">{upd.date}</span>
                   </div>
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => onTogglePinUpdate(upd.id)}
-                      className={`p-1 hover:bg-slate-150 rounded cursor-pointer ${upd.isPinned ? "text-amber-500" : "text-slate-300 hover:text-slate-500"}`}
-                      title={upd.isPinned ? "Lepas semat" : "Sematkan di atas"}
-                    >
-                      <Pin size={12} className={upd.isPinned ? "fill-amber-500" : ""} />
-                    </button>
-                    <button
-                      onClick={() => onDeleteUpdate(upd.id)}
-                      className="p-1 hover:bg-rose-50 text-slate-300 hover:text-rose-600 rounded cursor-pointer"
-                      title="Hapus Pengumuman"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
+                  {userRole !== "viewer" && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => onTogglePinUpdate(upd.id)}
+                        className={`p-1 hover:bg-slate-150 rounded cursor-pointer ${upd.isPinned ? "text-amber-500" : "text-slate-300 hover:text-slate-500"}`}
+                        title={upd.isPinned ? "Lepas semat" : "Sematkan di atas"}
+                      >
+                        <Pin size={12} className={upd.isPinned ? "fill-amber-500" : ""} />
+                      </button>
+                      <button
+                        onClick={() => onDeleteUpdate(upd.id)}
+                        className="p-1 hover:bg-rose-50 text-slate-300 hover:text-rose-600 rounded cursor-pointer"
+                        title="Hapus Pengumuman"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1">

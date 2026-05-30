@@ -1,0 +1,183 @@
+{
+  "entities": {
+    "ExamPackage": {
+      "title": "ExamPackage",
+      "description": "Defines an exam package which contains questions and meta info.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "duration": { "type": "integer" },
+        "totalQuestions": { "type": "integer" },
+        "description": { "type": "string" },
+        "difficulty": { "type": "string", "enum": ["Mudah", "Sedang", "Sulit"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "duration", "totalQuestions", "description", "difficulty", "createdAt"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "A single question associated with an exam package.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "packageId": { "type": "string" },
+        "questionText": { "type": "string" },
+        "options": {
+          "type": "array",
+          "description": "The multichoice options (A-E) for this question"
+        },
+        "correctAnswer": { "type": "string", "enum": ["A", "B", "C", "D", "E"] },
+        "explanation": { "type": "string" }
+      },
+      "required": ["id", "packageId", "questionText", "options", "correctAnswer"]
+    },
+    "SystemUpdate": {
+      "title": "SystemUpdate",
+      "description": "Portal announcements and updates posted by admin or teachers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "date": { "type": "string" },
+        "category": { "type": "string", "enum": ["Umum", "Sistem", "Ujian"] },
+        "isPinned": { "type": "boolean" }
+      },
+      "required": ["id", "title", "content", "date", "category", "isPinned"]
+    },
+    "ExamHistory": {
+      "title": "ExamHistory",
+      "description": "Historic test results of students who completed exams.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "studentNisn": { "type": "string" },
+        "examName": { "type": "string" },
+        "score": { "type": "number" },
+        "maxScore": { "type": "number" },
+        "status": { "type": "string", "enum": ["Lulus", "Gagal", "Remedial"] },
+        "startTime": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "answers": { "type": "object" }
+      },
+      "required": ["id", "studentName", "studentEmail", "examName", "score", "maxScore", "status", "startTime", "durationMinutes"]
+    },
+    "LiveParticipant": {
+      "title": "LiveParticipant",
+      "description": "Real-time state and proctor tracking document of an active student taking an exam.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "examName": { "type": "string" },
+        "currentQuestion": { "type": "integer" },
+        "totalQuestions": { "type": "integer" },
+        "status": { "type": "string" },
+        "warningsCount": { "type": "integer" },
+        "timeRemaining": { "type": "number" },
+        "lastActive": { "type": "string" },
+        "ipAddress": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "examName", "currentQuestion", "totalQuestions", "status", "warningsCount", "timeRemaining", "lastActive", "ipAddress"]
+    },
+    "ExamSchedule": {
+      "title": "ExamSchedule",
+      "description": "Active schedules for test execution.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "packageName": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "isLocked": { "type": "boolean" },
+        "proctorName": { "type": "string" },
+        "passTargetPercentage": { "type": "number" }
+      },
+      "required": ["id", "title", "packageName", "startTime", "endTime", "isLocked", "proctorName", "passTargetPercentage"]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Administrative, proctor, teacher or grader accounts.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["Admin", "Guru", "Pengawas", "Viewer"] },
+        "email": { "type": "string" },
+        "status": { "type": "string", "enum": ["Aktif", "Nonaktif"] },
+        "lastLogin": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" }
+      },
+      "required": ["id", "name", "role", "email", "status", "lastLogin"]
+    },
+    "SystemActivityLog": {
+      "title": "SystemActivityLog",
+      "description": "Audit trail log tracking administrative changes, updates or system resets.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "userName": { "type": "string" },
+        "userRole": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "action": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "userName", "userRole", "userEmail", "action"]
+    },
+    "ServerTimeConfig": {
+      "title": "ServerTimeConfig",
+      "description": "Manual vs NTP server timing offset state configuration document.",
+      "type": "object",
+      "properties": {
+        "useManualTime": { "type": "boolean" },
+        "offsetMs": { "type": "number" }
+      },
+      "required": ["useManualTime", "offsetMs"]
+    }
+  },
+  "firestore": {
+    "/packages/{packageId}": {
+      "schema": "ExamPackage",
+      "description": "Exam packages list"
+    },
+    "/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Individual questions bank"
+    },
+    "/updates/{updateId}": {
+      "schema": "SystemUpdate",
+      "description": "System or exam announcements"
+    },
+    "/history/{historyId}": {
+      "schema": "ExamHistory",
+      "description": "Student results history database"
+    },
+    "/participants/{participantId}": {
+      "schema": "LiveParticipant",
+      "description": "Live active test monitoring"
+    },
+    "/schedules/{scheduleId}": {
+      "schema": "ExamSchedule",
+      "description": "Exam timetables / schedules to lock or unlock"
+    },
+    "/accounts/{accountId}": {
+      "schema": "UserAccount",
+      "description": "System accounts directory"
+    },
+    "/activityLogs/{logId}": {
+      "schema": "SystemActivityLog",
+      "description": "CBT audit logs database"
+    },
+    "/config/serverTime": {
+      "schema": "ServerTimeConfig",
+      "description": "Real-time timing synchronization offset options"
+    }
+  }
+}

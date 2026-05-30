@@ -12,6 +12,7 @@ export interface ExamPackage {
   description: string;
   difficulty: "Mudah" | "Sedang" | "Sulit";
   createdAt: string;
+  createdBy?: string;
 }
 
 export interface Question {
@@ -39,12 +40,14 @@ export interface ExamHistory {
   id: string;
   studentName: string;
   studentEmail: string;
+  studentNisn?: string;
   examName: string;
   score: number;
   maxScore: number;
   status: "Lulus" | "Gagal" | "Remedial";
   startTime: string;
   durationMinutes: number;
+  answers?: Record<string, "A" | "B" | "C" | "D" | "E">;
 }
 
 export interface LiveParticipant {
@@ -70,19 +73,60 @@ export interface ExamSchedule {
   isLocked: boolean;
   proctorName: string;
   passTargetPercentage: number; // e.g. 70
+  mapel?: string;
+  kelas?: string;
+  token?: string;
 }
 
 export interface UserAccount {
   id: string;
   name: string;
-  role: "Admin" | "Pengawas" | "Fasilitator";
+  role: "Admin" | "Guru" | "Pengawas" | "Viewer";
   email: string;
   status: "Aktif" | "Nonaktif";
   lastLogin: string;
+  username?: string;
+  password?: string;
 }
 
 export interface ServerTimeConfig {
   useManualTime: boolean;
   offsetMs: number;
+}
+
+export interface SystemActivityLog {
+  id: string;
+  timestamp: string;
+  userName: string;
+  userRole: string;
+  userEmail: string;
+  action: string;
+}
+
+export interface Subject {
+  id: string;
+  name: string;
+}
+
+export interface ClassItem {
+  id: string;
+  name: string;
+}
+
+export interface Teacher {
+  id: string;
+  name: string;
+  mapel: string;
+  username: string;
+  password?: string;
+}
+
+export interface Student {
+  id: string;
+  nisn: string;
+  name: string;
+  kelas: string;
+  username: string;
+  password?: string;
 }
 

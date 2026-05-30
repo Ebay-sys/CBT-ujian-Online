@@ -36,7 +36,10 @@ import {
   LiveParticipant,
   ExamSchedule,
   UserAccount,
-  ServerTimeConfig
+  ServerTimeConfig,
+  SystemActivityLog,
+  Subject,
+  ClassItem
 } from "./types";
 
 import {
@@ -51,7 +54,7 @@ import {
 
 // Component imports
 import DashboardView from "./components/DashboardView";
-import PackagesView from "./components/PackagesView";
+import AiBankSoalView from "./components/AiBankSoalView";
 import AnnouncementsView from "./components/AnnouncementsView";
 import HistoryView from "./components/HistoryView";
 import MonitorView from "./components/MonitorView";
@@ -65,8 +68,12 @@ export default function App() {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   // Portal & Role states (Separate Admin & Student Portal)
-  const [userRole, setUserRole] = useState<"admin" | "student" | null>(() => {
-    return localStorage.getItem("cbt_user_role") as "admin" | "student" | null;
+  const [userRole, setUserRole] = useState<"admin" | "guru" | "pengawas" | "viewer" | "student" | null>(() => {
+    return localStorage.getItem("cbt_user_role") as any;
+  });
+  const [loggedInUser, setLoggedInUser] = useState<UserAccount | null>(() => {
+    const saved = localStorage.getItem("cbt_logged_in_user");
+    return saved ? JSON.parse(saved) : null;
   });
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
@@ -108,9 +115,61 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_ACCOUNTS;
   });
 
+  const [activityLogs, setActivityLogs] = useState<SystemActivityLog[]>(() => {
+    const saved = localStorage.getItem("cbt_activity_logs");
+    return saved ? JSON.parse(saved) : [
+      {
+        id: "log-initial-1",
+        timestamp: "2026-05-27 08:00:22 WIB",
+        userName: "Admin CBT Utama",
+        userRole: "Admin",
+        userEmail: "admin.sdn14@singkawang.sch.id",
+        action: "Inisialisasi sistem CBT pertama kali"
+      },
+      {
+        id: "log-initial-2",
+        timestamp: "2026-05-27 10:14:55 WIB",
+        userName: "Hendra Wijaya, S.Pd",
+        userRole: "Guru",
+        userEmail: "hendra.guru@singkawang.sch.id",
+        action: "Menambahkan soal baru mata ujian Matematika"
+      }
+    ];
+  });
+
   const [serverTimeConfig, setServerTimeConfig] = useState<ServerTimeConfig>(() => {
     const saved = localStorage.getItem("cbt_server_time_config");
     return saved ? JSON.parse(saved) : { useManualTime: false, offsetMs: 0 };
+  });
+
+  const [subjects, setSubjects] = useState<Subject[]>(() => {
+    const saved = localStorage.getItem("cbt_subjects");
+    if (saved) return JSON.parse(saved);
+    const initial = [
+      { id: "sub-1", name: "Matematika" },
+      { id: "sub-2", name: "Bahasa Indonesia" },
+      { id: "sub-3", name: "IPA" },
+      { id: "sub-4", name: "IPS" },
+      { id: "sub-5", name: "PJOK" },
+      { id: "sub-6", name: "PPKn" },
+    ];
+    localStorage.setItem("cbt_subjects", JSON.stringify(initial));
+    return initial;
+  });
+
+  const [classes, setClasses] = useState<ClassItem[]>(() => {
+    const saved = localStorage.getItem("cbt_classes");
+    if (saved) return JSON.parse(saved);
+    const initial = [
+      { id: "cls-1", name: "Kelas 1" },
+      { id: "cls-2", name: "Kelas 2" },
+      { id: "cls-3", name: "Kelas 3" },
+      { id: "cls-4", name: "Kelas 4" },
+      { id: "cls-5", name: "Kelas 5" },
+      { id: "cls-6", name: "Kelas 6" },
+    ];
+    localStorage.setItem("cbt_classes", JSON.stringify(initial));
+    return initial;
   });
 
   const [showNotificationPopup, setShowNotificationPopup] = useState(false);
@@ -133,15 +192,22 @@ export default function App() {
 
   // One-time automatic cleanup to make sure existing users start with empty/reset statistics and no mock list items
   useEffect(() => {
-    const isResetDone = localStorage.getItem("cbt_reset_history_v2026");
+    const isResetDone = localStorage.getItem("cbt_reset_history_v2026_permanen");
     if (!isResetDone) {
       localStorage.setItem("cbt_history", JSON.stringify([]));
       localStorage.setItem("cbt_participants", JSON.stringify([]));
       setHistory([]);
       setParticipants([]);
-      localStorage.setItem("cbt_reset_history_v2026", "true");
+      localStorage.setItem("cbt_reset_history_v2026_permanen", "true");
     }
   }, []);
+
+  // Redirect Guru role if they are on a non-allowed tab
+  useEffect(() => {
+    if (userRole === "guru" && activeTab !== "Dashboard" && activeTab !== "AiBankSoal" && activeTab !== "Questions") {
+      setActiveTab("Dashboard");
+    }
+  }, [userRole, activeTab]);
 
   // Populate seenStatusesRef once on mount with current states to avoid immediate alerts for pre-existing records on page load
   useEffect(() => {
@@ -248,6 +314,7 @@ export default function App() {
     participants,
     schedules,
     accounts,
+    activityLogs,
     serverTimeConfig
   });
 
@@ -260,6 +327,7 @@ export default function App() {
     participants,
     schedules,
     accounts,
+    activityLogs,
     serverTimeConfig
   };
   
@@ -272,6 +340,7 @@ export default function App() {
     participants: false,
     schedules: false,
     accounts: false,
+    activityLogs: false,
     serverTimeConfig: false,
   });
 
@@ -354,6 +423,10 @@ export default function App() {
                 ignoreNextWsEmitRef.current.accounts = true;
                 setAccounts(serverState.accounts);
               }
+              if (serverState.activityLogs) {
+                ignoreNextWsEmitRef.current.activityLogs = true;
+                setActivityLogs(serverState.activityLogs);
+              }
               if (serverState.serverTimeConfig) {
                 ignoreNextWsEmitRef.current.serverTimeConfig = true;
                 setServerTimeConfig(serverState.serverTimeConfig);
@@ -372,6 +445,7 @@ export default function App() {
               else if (key === "participants") setParticipants(data);
               else if (key === "schedules") setSchedules(data);
               else if (key === "accounts") setAccounts(data);
+              else if (key === "activityLogs") setActivityLogs(data);
               else if (key === "serverTimeConfig") setServerTimeConfig(data);
             }
           }
@@ -501,12 +575,29 @@ export default function App() {
     }
   }, [serverTimeConfig]);
 
+  useEffect(() => {
+    localStorage.setItem("cbt_activity_logs", JSON.stringify(activityLogs));
+    if (ignoreNextWsEmitRef.current.activityLogs) {
+      ignoreNextWsEmitRef.current.activityLogs = false;
+    } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "STATE_UPDATE", key: "activityLogs", data: activityLogs }));
+    }
+  }, [activityLogs]);
+
   // Handlers for packages view
   const handleAddPackage = (newPkg: ExamPackage) => {
-    setPackages((prev) => [newPkg, ...prev]);
+    const pkgWithCreator: ExamPackage = {
+      ...newPkg,
+      createdBy: loggedInUser ? (loggedInUser.email || loggedInUser.name) : "Guru Pengajar (CBT)"
+    };
+    setPackages((prev) => [pkgWithCreator, ...prev]);
   };
   const handleAddPackageWithQuestions = (newPkg: ExamPackage, newQuestions: any[]) => {
-    setPackages((prev) => [newPkg, ...prev]);
+    const pkgWithCreator: ExamPackage = {
+      ...newPkg,
+      createdBy: loggedInUser ? (loggedInUser.email || loggedInUser.name) : "Guru Pengajar (CBT)"
+    };
+    setPackages((prev) => [pkgWithCreator, ...prev]);
     const formattedQuestions: Question[] = newQuestions.map((q, idx) => ({
       id: `q-${newPkg.id}-${Date.now()}-${idx}`,
       packageId: newPkg.id,
@@ -521,7 +612,12 @@ export default function App() {
     setPackages((prev) => prev.map((p) => (p.id === editedPkg.id ? editedPkg : p)));
   };
   const handleDeletePackage = (id: string) => {
+    const targetPkg = packages.find((p) => p.id === id);
     setPackages((prev) => prev.filter((p) => p.id !== id));
+    setQuestions((prev) => prev.filter((q) => q.packageId !== id));
+    if (targetPkg) {
+      setSchedules((prev) => prev.filter((s) => s.packageName !== targetPkg.name));
+    }
   };
 
   // Handlers for updates view
@@ -555,16 +651,66 @@ export default function App() {
   };
 
   // Handlers for accounts view
+  const logSystemAction = (userName: string, userRole: string, userEmail: string, action: string) => {
+    const formattedDate = (() => {
+      const wibTime = Date.now() + 7 * 60 * 60 * 1000;
+      const d = new Date(wibTime);
+      const yr = d.getUTCFullYear();
+      const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dy = String(d.getUTCDate()).padStart(2, "0");
+      const hr = String(d.getUTCHours()).padStart(2, "0");
+      const mn = String(d.getUTCMinutes()).padStart(2, "0");
+      const sc = String(d.getUTCSeconds()).padStart(2, "0");
+      return `${yr}-${mo}-${dy} ${hr}:${mn}:${sc} WIB`;
+    })();
+
+    const newLog: SystemActivityLog = {
+      id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: formattedDate,
+      userName,
+      userRole,
+      userEmail,
+      action
+    };
+    setActivityLogs((prev) => [newLog, ...prev]);
+  };
+
   const handleToggleAccountStatus = (id: string) => {
-    setAccounts((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: a.status === "Aktif" ? "Nonaktif" : "Aktif" } : a))
-    );
+    setAccounts((prev) => {
+      const target = prev.find(a => a.id === id);
+      if (target) {
+        logSystemAction(
+          loggedInUser?.name || "System",
+          loggedInUser?.role || "Admin",
+          loggedInUser?.email || "",
+          `Mengubah status akun "${target.name}" (${target.role}) menjadi ${target.status === "Aktif" ? "Nonaktif" : "Aktif"}`
+        );
+      }
+      return prev.map((a) => (a.id === id ? { ...a, status: a.status === "Aktif" ? "Nonaktif" : "Aktif" } : a));
+    });
   };
   const handleAddAccount = (acc: UserAccount) => {
     setAccounts((prev) => [acc, ...prev]);
+    logSystemAction(
+      loggedInUser?.name || "System",
+      loggedInUser?.role || "Admin",
+      loggedInUser?.email || "",
+      `Mendaftarkan akun baru: "${acc.name}" (${acc.role}) dengan nama pengguna: "${acc.username || acc.email}"`
+    );
   };
   const handleDeleteAccount = (id: string) => {
-    setAccounts((prev) => prev.filter((a) => a.id !== id));
+    setAccounts((prev) => {
+      const target = prev.find(a => a.id === id);
+      if (target) {
+        logSystemAction(
+          loggedInUser?.name || "System",
+          loggedInUser?.role || "Admin",
+          loggedInUser?.email || "",
+          `Menghapus akun pengawas/panitia "${target.name}" (${target.role})`
+        );
+      }
+      return prev.filter((a) => a.id !== id);
+    });
   };
   const handleDeleteHistory = (id: string) => {
     setHistory((prev) => prev.filter((h) => h.id !== id));
@@ -587,7 +733,40 @@ export default function App() {
       const adminAccounts = accounts.filter((acc) => acc.role === "Admin" || acc.email === "admin.sdn14@singkawang.sch.id");
       setAccounts(adminAccounts.length > 0 ? adminAccounts : INITIAL_ACCOUNTS.slice(0, 1));
     }
+    logSystemAction(
+      loggedInUser?.name || "System",
+      loggedInUser?.role || "Admin",
+      loggedInUser?.email || "",
+      `Melakukan reset data aplikasi (Hapus Riwayat: ${options.resetHistory ? "Ya" : "Tidak"}, Hapus Jadwal: ${options.resetSchedules ? "Ya" : "Tidak"}, Hapus Akun non-Admin: ${options.resetAccounts ? "Ya" : "Tidak"})`
+    );
     alert("Data berhasil dipangkas & dibersihkan! Aplikasi kini berjalan jauh lebih cepat, responsif, dan ringan.");
+  };
+
+  const handleImportBackup = (data: {
+    packages?: ExamPackage[];
+    questions?: Question[];
+    history?: ExamHistory[];
+    accounts?: UserAccount[];
+  }) => {
+    if (data.packages) {
+      setPackages(data.packages);
+    }
+    if (data.questions) {
+      setQuestions(data.questions);
+    }
+    if (data.history) {
+      setHistory(data.history);
+    }
+    if (data.accounts) {
+      setAccounts(data.accounts);
+    }
+    logSystemAction(
+      loggedInUser?.name || "System",
+      loggedInUser?.role || "Admin",
+      loggedInUser?.email || "",
+      "Memulihkan database utama dari berkas JSON cadangan"
+    );
+    alert("Database Utama Sukses Dipulihkan! Seluruh modul data paket soal, bank soal, riwayat ujian, dan daftar pengawas diperbarui.");
   };
 
   // Live Participant Monitoring actions
@@ -615,7 +794,6 @@ export default function App() {
   // Sidebar link details
   const navigationItems = [
     { name: "Dashboard", label: "Dasbor", icon: Home },
-    { name: "Packages", label: "Manajemen Paket", icon: Box },
     { name: "Announcements", label: "Pengumuman", icon: Megaphone },
     { category: "Ujian" },
     { name: "History", label: "Riwayat Tes Ujian", icon: Clock },
@@ -624,9 +802,33 @@ export default function App() {
     { category: "Manajemen Ujian" },
     { name: "ExamData", label: "Data Ujian", icon: FileText },
     { name: "Questions", label: "Data Paket Soal", icon: Folder },
+    { name: "AiBankSoal", label: "Bank Soal Mapel (AI)", icon: Sparkles },
     { category: "Manajemen Akun" },
     { name: "Accounts", label: "Data Akun", icon: Users }
   ];
+
+  const filteredNavigationItems = navigationItems.filter((item) => {
+    if (userRole === "guru") {
+      if ("category" in item) {
+        return item.category === "Manajemen Ujian";
+      }
+      return item.name === "Dashboard" || item.name === "AiBankSoal" || item.name === "Questions";
+    }
+    if (userRole === "pengawas") {
+      return item.name === "Dashboard" || item.name === "History" || item.name === "Monitoring" || item.name === "Announcements";
+    }
+    if (userRole === "viewer") {
+      return item.name === "Dashboard" || item.name === "History" || item.name === "Announcements";
+    }
+    return true;
+  }).filter((item, index, arr) => {
+    if ("category" in item) {
+      const nextItems = arr.slice(index + 1);
+      const hasContentBeforeNextCategory = nextItems.length > 0 && !("category" in nextItems[0]);
+      return hasContentBeforeNextCategory;
+    }
+    return true;
+  });
 
   const renderActiveView = () => {
     switch (activeTab) {
@@ -638,16 +840,25 @@ export default function App() {
             packages={packages}
             serverTimeConfig={serverTimeConfig}
             onSetServerTimeConfig={setServerTimeConfig}
+            userRole={userRole || undefined}
+            loggedInUser={loggedInUser}
+            onDeletePackage={handleDeletePackage}
           />
         );
-      case "Packages":
+      case "AiBankSoal":
         return (
-          <PackagesView
+          <AiBankSoalView
             packages={packages}
+            questions={questions}
+            schedules={schedules}
+            subjects={subjects}
+            classes={classes}
             onAddPackage={handleAddPackage}
             onEditPackage={handleEditPackage}
             onDeletePackage={handleDeletePackage}
             onAddPackageWithQuestions={handleAddPackageWithQuestions}
+            onAddQuestion={handleAddQuestion}
+            onDeleteQuestion={handleDeleteQuestion}
           />
         );
       case "Announcements":
@@ -657,14 +868,18 @@ export default function App() {
             onAddUpdate={handleAddUpdate}
             onTogglePinUpdate={handleTogglePinUpdate}
             onDeleteUpdate={handleDeleteUpdate}
+            userRole={userRole || undefined}
           />
         );
       case "History":
         return (
           <HistoryView
             history={history}
+            packages={packages}
+            questions={questions}
             onDeleteHistory={handleDeleteHistory}
             onDeleteMultipleHistory={handleDeleteMultipleHistory}
+            userRole={userRole || undefined}
           />
         );
       case "Monitoring":
@@ -698,6 +913,9 @@ export default function App() {
             onAddSchedule={handleAddSchedule}
             onDeleteSchedule={handleDeleteSchedule}
             serverTimeConfig={serverTimeConfig}
+            packages={packages}
+            subjects={subjects}
+            classes={classes}
           />
         );
       case "Questions":
@@ -705,8 +923,13 @@ export default function App() {
           <QuestionsView
             questions={questions}
             packages={packages}
+            subjects={subjects}
             onAddQuestion={handleAddQuestion}
             onDeleteQuestion={handleDeleteQuestion}
+            onAddPackage={handleAddPackage}
+            onEditPackage={handleEditPackage}
+            onDeletePackage={handleDeletePackage}
+            onChangeActiveTab={setActiveTab}
           />
         );
       case "Accounts":
@@ -717,6 +940,13 @@ export default function App() {
             onAddAccount={handleAddAccount}
             onDeleteAccount={handleDeleteAccount}
             onResetApp={handleResetApp}
+            packages={packages}
+            questions={questions}
+            history={history}
+            onImportBackup={handleImportBackup}
+            userRole={userRole}
+            activityLogs={activityLogs}
+            onAddActivityLog={logSystemAction}
           />
         );
       default:
@@ -730,12 +960,141 @@ export default function App() {
 
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminUsername === "admin" && adminPassword === "user123") {
+    const cleanUsername = adminUsername.trim().toLowerCase();
+    
+    // Check if it's the master admin
+    if (cleanUsername === "admin" && adminPassword === "user123") {
       setUserRole("admin");
+      const masterAdmin: UserAccount = {
+        id: "acc-admin-master",
+        name: "Admin CBT Utama",
+        role: "Admin",
+        email: "admin.sdn14@singkawang.sch.id",
+        status: "Aktif",
+        lastLogin: (() => {
+          const wibTime = Date.now() + 7 * 60 * 60 * 1000;
+          const d = new Date(wibTime);
+          const yr = d.getUTCFullYear();
+          const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+          const dy = String(d.getUTCDate()).padStart(2, "0");
+          const hr = String(d.getUTCHours()).padStart(2, "0");
+          const mn = String(d.getUTCMinutes()).padStart(2, "0");
+          const sc = String(d.getUTCSeconds()).padStart(2, "0");
+          return `${yr}-${mo}-${dy} ${hr}:${mn}:${sc} WIB`;
+        })()
+      };
+      setLoggedInUser(masterAdmin);
       localStorage.setItem("cbt_user_role", "admin");
+      localStorage.setItem("cbt_logged_in_user", JSON.stringify(masterAdmin));
       setLoginError("");
+      logSystemAction(masterAdmin.name, "Admin", masterAdmin.email, "Login sukses (Master Admin)");
+      return;
+    }
+
+    // Check if it's the master guru
+    if (cleanUsername === "guru" && adminPassword === "guru123") {
+      setUserRole("guru");
+      const masterGuru: UserAccount = {
+        id: "acc-guru-master",
+        name: "Guru Pengajar (CBT)",
+        role: "Guru",
+        email: "guru@singkawang.sch.id",
+        status: "Aktif",
+        lastLogin: (() => {
+          const wibTime = Date.now() + 7 * 60 * 60 * 1000;
+          const d = new Date(wibTime);
+          const yr = d.getUTCFullYear();
+          const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+          const dy = String(d.getUTCDate()).padStart(2, "0");
+          const hr = String(d.getUTCHours()).padStart(2, "0");
+          const mn = String(d.getUTCMinutes()).padStart(2, "0");
+          const sc = String(d.getUTCSeconds()).padStart(2, "0");
+          return `${yr}-${mo}-${dy} ${hr}:${mn}:${sc} WIB`;
+        })()
+      };
+      setLoggedInUser(masterGuru);
+      localStorage.setItem("cbt_user_role", "guru");
+      localStorage.setItem("cbt_logged_in_user", JSON.stringify(masterGuru));
+      setActiveTab("AiBankSoal");
+      setLoginError("");
+      logSystemAction(masterGuru.name, "Guru", masterGuru.email, "Login sukses (Master Guru)");
+      return;
+    }
+
+    // Otherwise, check in the registered accounts
+    const matchedAccount = accounts.find(
+      (acc) =>
+        acc.email.trim().toLowerCase() === cleanUsername ||
+        (acc.username && acc.username.trim().toLowerCase() === cleanUsername)
+    );
+
+    if (matchedAccount) {
+      if (matchedAccount.password && matchedAccount.password !== adminPassword) {
+        setLoginError("Nama Pengguna atau Password salah!");
+        return;
+      }
+      if (matchedAccount.status !== "Aktif") {
+        setLoginError("Akun ini telah dinonaktifkan oleh administrator!");
+        return;
+      }
+      
+      const roleLower = matchedAccount.role.toLowerCase();
+      if (roleLower === "admin") {
+        setUserRole("admin");
+        localStorage.setItem("cbt_user_role", "admin");
+        setActiveTab("Dashboard");
+      } else if (roleLower === "guru") {
+        setUserRole("guru");
+        localStorage.setItem("cbt_user_role", "guru");
+        setActiveTab("AiBankSoal");
+      } else if (roleLower === "pengawas") {
+        setUserRole("pengawas");
+        localStorage.setItem("cbt_user_role", "pengawas");
+        setActiveTab("Dashboard");
+      } else if (roleLower === "viewer") {
+        setUserRole("viewer");
+        localStorage.setItem("cbt_user_role", "viewer");
+        setActiveTab("Dashboard");
+      } else {
+        // Fallback default
+        setUserRole("guru");
+        localStorage.setItem("cbt_user_role", "guru");
+        setActiveTab("AiBankSoal");
+      }
+
+      const loginTimeString = (() => {
+        const wibTime = Date.now() + 7 * 60 * 60 * 1000;
+        const d = new Date(wibTime);
+        const yr = d.getUTCFullYear();
+        const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const dy = String(d.getUTCDate()).padStart(2, "0");
+        const hr = String(d.getUTCHours()).padStart(2, "0");
+        const mn = String(d.getUTCMinutes()).padStart(2, "0");
+        const sc = String(d.getUTCSeconds()).padStart(2, "0");
+        return `${yr}-${mo}-${dy} ${hr}:${mn}:${sc} WIB`;
+      })();
+
+      const updatedAccount: UserAccount = {
+        ...matchedAccount,
+        lastLogin: loginTimeString
+      };
+      
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === matchedAccount.id ? updatedAccount : a))
+      );
+      
+      setLoggedInUser(updatedAccount);
+      localStorage.setItem("cbt_logged_in_user", JSON.stringify(updatedAccount));
+      setLoginError("");
+
+      logSystemAction(
+        matchedAccount.name,
+        matchedAccount.role,
+        matchedAccount.email,
+        `Login sukses (Hak Akses: ${matchedAccount.role})`
+      );
     } else {
-      setLoginError("Username atau Password Admin salah!");
+      setLoginError("Nama Pengguna/Email atau Password salah!");
     }
   };
 
@@ -860,7 +1219,7 @@ export default function App() {
                 </div>
                 <button
                   type="submit"
-                  className="w-full py-3.5 bg-gradient-to-r from-pink-500 to-rose-600 hover:from-pink-600 hover:to-rose-700 text-white font-extrabold text-xs rounded-2xl transition duration-300 cursor-pointer flex items-center justify-center gap-1.5 uppercase tracking-wider"
+                  className="w-full py-3.5 bg-gradient-to-r from-pink-500 to-rose-600 hover:from-pink-600 hover:to-rose-700 text-white font-extrabold text-xs rounded-2xl transition duration-300 cursor-pointer flex items-center justify-center gap-1.5 uppercase tracking-wider shadow-md"
                 >
                   Masuk Dashboard Guru 💻
                 </button>
@@ -970,7 +1329,7 @@ export default function App() {
 
             {/* Nav list of items */}
             <nav className="space-y-1 text-xs">
-              {navigationItems.map((item, index) => {
+              {filteredNavigationItems.map((item, index) => {
                 if ("category" in item) {
                   return (
                     <div
@@ -1017,19 +1376,36 @@ export default function App() {
           {/* Sidebar bottom footer profile node */}
           <div className="pt-4 border-t border-slate-100 mt-6 space-y-3">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-red-100 text-red-700 font-bold flex items-center justify-center border border-red-200 shadow-2xs shrink-0 select-none">
-                D
+              <div className="w-8 h-8 rounded-full bg-red-100 text-red-700 font-bold flex items-center justify-center border border-red-200 shadow-2xs shrink-0 select-none text-xs">
+                {loggedInUser ? loggedInUser.name[0].toUpperCase() : "A"}
               </div>
               <div className="min-w-0 leading-tight">
-                <h5 className="font-bold text-slate-800 text-xs truncate font-heading">Dedy Hendriawan</h5>
-                <span className="text-[10px] text-slate-400 font-mono truncate block">dedyhendriawansusanto@gmail.com</span>
+                <h5 className="font-bold text-slate-800 text-xs truncate font-heading">
+                  {loggedInUser ? loggedInUser.name : "Administrator"}
+                </h5>
+                <span className="text-[10px] text-slate-400 font-mono truncate block">
+                  {loggedInUser ? loggedInUser.email : "admin@singkawang.sch.id"}
+                </span>
+                <span className={`inline-block px-1.5 py-0.5 mt-1 rounded text-[9px] font-black font-sans uppercase ${
+                  userRole === "admin"
+                    ? "bg-slate-900 text-slate-100"
+                    : userRole === "guru"
+                    ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                    : userRole === "pengawas"
+                    ? "bg-purple-100 text-purple-800 border border-purple-200 animate-pulse"
+                    : "bg-slate-100 text-slate-500 border border-slate-200"
+                }`}>
+                  HAK: {userRole === "admin" ? "ADMIN PENUH" : userRole === "guru" ? "GURU" : userRole === "pengawas" ? "PENGAWAS" : "VIEWER"}
+                </span>
               </div>
             </div>
             
             <button
               onClick={() => {
                 setUserRole(null);
+                setLoggedInUser(null);
                 localStorage.removeItem("cbt_user_role");
+                localStorage.removeItem("cbt_logged_in_user");
               }}
               className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-slate-200 hover:border-red-200 hover:bg-red-50 hover:text-red-700 text-slate-500 font-semibold text-xs rounded-lg transition cursor-pointer"
             >

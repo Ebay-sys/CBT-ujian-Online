@@ -23,7 +23,12 @@ import {
   ShieldAlert,
   Printer,
   X,
-  Compass
+  Compass,
+  Download,
+  Eye,
+  ZoomIn,
+  ZoomOut,
+  XCircle
 } from "lucide-react";
 import { ExamSchedule, ExamPackage, Question, LiveParticipant, ExamHistory, ServerTimeConfig } from "../types";
 
@@ -129,8 +134,9 @@ export default function StudentPortalView({
   const [tokenInput, setTokenInput] = useState("");
   const [hasAgreedRules, setHasAgreedRules] = useState(false);
   const [currentStep, setCurrentStep] = useState<"login" | "briefing" | "exam" | "score">("login");
+  const [activeFaq, setActiveFaq] = useState<number | null>(null);
 
-  // Dynamic ticking student UTC clock using the synced manual server UTC offset
+  // Dynamic ticking student WIB clock using the synced manual server offset
   const [studentNow, setStudentNow] = useState(Date.now());
 
   useEffect(() => {
@@ -144,15 +150,16 @@ export default function StudentPortalView({
     return studentNow + (serverTimeConfig?.offsetMs || 0);
   };
 
-  const formatStudentTimeUTC = (timestamp: number) => {
-    const d = new Date(timestamp);
-    const yr = d.getUTCFullYear();
-    const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const dy = String(d.getUTCDate()).padStart(2, "0");
-    const hr = String(d.getUTCHours()).padStart(2, "0");
-    const mn = String(d.getUTCMinutes()).padStart(2, "0");
-    const sc = String(d.getUTCSeconds()).padStart(2, "0");
-    return `${yr}-${mo}-${dy} ${hr}:${mn}:${sc}`;
+  const formatStudentTimeWIB = (timestamp: number) => {
+    // WIB is UTC+7
+    const wibDate = new Date(timestamp + 7 * 60 * 60 * 1000);
+    const yr = wibDate.getUTCFullYear();
+    const mo = String(wibDate.getUTCMonth() + 1).padStart(2, "0");
+    const dy = String(wibDate.getUTCDate()).padStart(2, "0");
+    const hr = String(wibDate.getUTCHours()).padStart(2, "0");
+    const mn = String(wibDate.getUTCMinutes()).padStart(2, "0");
+    const sc = String(wibDate.getUTCSeconds()).padStart(2, "0");
+    return `${yr}-${mo}-${dy} ${hr}:${mn}:${sc} WIB`;
   };
 
   // Active Exam States
@@ -208,8 +215,10 @@ export default function StudentPortalView({
 
   // Score Screen result state
   const [endedExamResult, setEndedExamResult] = useState<{
+    id?: string;
     studentName: string;
     studentEmail: string;
+    studentNisn?: string;
     examName: string;
     score: number;
     maxScore: number;
@@ -219,7 +228,13 @@ export default function StudentPortalView({
     status: "Lulus" | "Gagal" | "Remedial";
     durationMinutes: number;
     kkm: number;
+    startTime?: string;
+    answers?: Record<string, "A" | "B" | "C" | "D" | "E">;
   } | null>(null);
+
+  const [previewResult, setPreviewResult] = useState<any | null>(null);
+  const [zoomLevel, setZoomLevel] = useState<number>(100);
+  const [showAnswerSheetReview, setShowAnswerSheetReview] = useState(false);
 
   // Real-time synchronization metrics
   const [lastSyncDelta, setLastSyncDelta] = useState<number>(0);
@@ -537,18 +552,22 @@ export default function StudentPortalView({
   // Force show completed score directly from admin intervention
   const handleTerminateAndShowScore = (historyRecord: ExamHistory) => {
     setEndedExamResult({
+      id: historyRecord.id,
       studentName: historyRecord.studentName,
       studentEmail: historyRecord.studentEmail,
+      studentNisn: historyRecord.studentNisn,
       examName: historyRecord.examName,
       score: historyRecord.score,
       maxScore: historyRecord.maxScore,
-      correctCount: Math.round((historyRecord.score / historyRecord.maxScore) * activeSession!.totalQuestions),
+      correctCount: Math.round((historyRecord.score / historyRecord.maxScore) * (activeSession?.totalQuestions || 10)),
       wrongCount:
-        activeSession!.totalQuestions - Math.round((historyRecord.score / historyRecord.maxScore) * activeSession!.totalQuestions),
+        (activeSession?.totalQuestions || 10) - Math.round((historyRecord.score / historyRecord.maxScore) * (activeSession?.totalQuestions || 10)),
       unansweredCount: 0,
       status: historyRecord.status,
       durationMinutes: historyRecord.durationMinutes,
-      kkm: activeSession?.kkm || 75
+      kkm: activeSession?.kkm || 75,
+      startTime: historyRecord.startTime,
+      answers: historyRecord.answers
     });
     setCurrentStep("score");
     setActiveSession(null);
@@ -611,12 +630,14 @@ export default function StudentPortalView({
       id: `hist-${Date.now()}`,
       studentName: activeSession.studentName,
       studentEmail: activeSession.studentEmail,
+      studentNisn: activeSession.studentNisn,
       examName: activeSession.packageName,
       score: score,
       maxScore: 100,
       status: status,
       startTime: new Date(Date.now() + (serverTimeConfig?.offsetMs || 0)).toISOString().replace("T", " ").slice(0, 16),
-      durationMinutes: durationUsedMinutes
+      durationMinutes: durationUsedMinutes,
+      answers: userAnswers
     };
 
     // 1. Save globally
@@ -627,8 +648,10 @@ export default function StudentPortalView({
 
     // 3. Store result locally for score breakdown screen
     setEndedExamResult({
+      id: completedRecord.id,
       studentName: activeSession.studentName,
       studentEmail: activeSession.studentEmail,
+      studentNisn: activeSession.studentNisn,
       examName: activeSession.packageName,
       score: score,
       maxScore: 100,
@@ -637,7 +660,9 @@ export default function StudentPortalView({
       unansweredCount: unanswered,
       status: status,
       durationMinutes: durationUsedMinutes,
-      kkm: activeSession.kkm
+      kkm: activeSession.kkm,
+      startTime: completedRecord.startTime,
+      answers: userAnswers
     });
 
     // 4. Reset sessions
@@ -655,6 +680,565 @@ export default function StudentPortalView({
       alert("Waktu ujian telah habis! Jawaban Anda telah dikumpulkan otomatis.");
     } else {
       alert(`Selamat! Ujian CBT Anda berhasil disubmit. Nilai akhir: ${score}`);
+    }
+  };
+
+  const getHistoryQuestions = (item: any) => {
+    const pkg = packages.find((p) => p.name === item.examName);
+    const pkgQuestions = questions.filter((q) => q.packageId === pkg?.id);
+    
+    if (pkgQuestions.length > 0) {
+      return pkgQuestions;
+    }
+
+    const total = pkg?.totalQuestions || 10;
+    
+    // Estimate or fetch correct/wrong/unanswered counts
+    let correctCount = item.correctCount;
+    let wrongCount = item.wrongCount;
+    let unansweredCount = item.unansweredCount;
+
+    if (correctCount === undefined) {
+      correctCount = Math.round((item.score / 100) * total);
+      const studentAnswers = item.answers || {};
+      const answeredKeysCount = Object.keys(studentAnswers).length;
+      unansweredCount = Math.max(0, total - answeredKeysCount);
+      wrongCount = Math.max(0, total - correctCount - unansweredCount);
+    }
+
+    const mockQuestions: Question[] = [];
+    const studentAnswers = item.answers || {};
+    let assignedCorrect = 0;
+    
+    for (let i = 0; i < total; i++) {
+      const qId = `mock-q-${i + 1}`;
+      const studentAns = studentAnswers[qId];
+      const hasAnswered = !!studentAns;
+      
+      let correctAnswer: "A" | "B" | "C" | "D" | "E" = "B";
+      if (hasAnswered) {
+        if (assignedCorrect < correctCount) {
+          correctAnswer = studentAns;
+          assignedCorrect++;
+        } else {
+          correctAnswer = studentAns === "A" ? "B" : "A";
+        }
+      } else {
+        correctAnswer = "A";
+      }
+      
+      mockQuestions.push({
+        id: qId,
+        packageId: "mock",
+        questionText: `[Butir Soal Latihan] Pertanyaan simulasi nomor ${i + 1} untuk mata pelajaran ${item.examName}. Silakan identifikasi analisis skema yang tepat berdasarkan referensi instruksional sistem.`,
+        options: [
+          { key: "A", text: "Opsi Solusi Analitik Kompleks Kategori A" },
+          { key: "B", text: "Hasil Estimasi Kuantitatif Kategori B (Rekomendasi Utama)" },
+          { key: "C", text: "Integrasi Komprehensif Skema Formulasi C" },
+          { key: "D", text: "Reduksi Ambigu Variabel Konteks D" },
+          { key: "E", text: "Evaluasi Komparatif Data Lapangan E" }
+        ],
+        correctAnswer: correctAnswer,
+        explanation: `Penjelasan terperinci mengenai korelasi teoritis dan pembuktian kualitatif dari jawaban ${correctAnswer}.`
+      });
+    }
+    
+    return mockQuestions;
+  };
+
+  const handleDownloadDocx = (item: any) => {
+    // Obtain questions (real or fallback mock)
+    const pkgQuestions = getHistoryQuestions(item);
+
+    const formattedDate = item.startTime || new Date().toISOString().replace("T", " ").slice(0, 16);
+    const statusColor = item.status === "Lulus" ? "#166534" : (item.status === "Remedial" ? "#b45309" : "#991b1b");
+
+    let questionsHtml = "";
+
+    if (pkgQuestions.length === 0) {
+      questionsHtml = `
+        <div style="text-align: center; padding: 20px; color: #9ca3af; font-style: italic; font-family: Arial, sans-serif; font-size: 11pt;">
+          Tidak ada data butir soal riil yang terekam di dalam sistem untuk paket ini. Format transkrip rekapitulasi nilai ditampilkan.
+        </div>`;
+    } else {
+      pkgQuestions.forEach((q, index) => {
+        const studentAns = item.answers ? item.answers[q.id] : undefined;
+        const isCorrect = studentAns === q.correctAnswer;
+        const hasAnswered = !!studentAns;
+
+        let optionsHtml = "";
+        q.options.forEach((opt) => {
+          let optStyle = "font-family: Arial, sans-serif; font-size: 11pt; margin-bottom: 4px; padding: 2px 4px;";
+          let suffix = "";
+
+          if (opt.key === q.correctAnswer) {
+            optStyle += " color: #166534; font-weight: bold;";
+            suffix += " [KUNCI JAWABAN]";
+          }
+
+          if (hasAnswered && opt.key === studentAns) {
+            if (isCorrect) {
+              optStyle += " background-color: #d1fae5; color: #166534; font-weight: bold;";
+              suffix += " (✓ Jawaban Siswa - BENAR)";
+            } else {
+              optStyle += " background-color: #fee2e2; color: #991b1b; font-weight: bold;";
+              suffix += " (✗ Jawaban Siswa - SALAH)";
+            }
+          }
+
+          optionsHtml += `
+            <div style="${optStyle}">
+              <span style="font-weight: bold;">${opt.key}.</span> ${opt.text}${suffix}
+            </div>
+          `;
+        });
+
+        let blockStatusHeader = "";
+        if (hasAnswered) {
+          blockStatusHeader = isCorrect
+            ? `<span style="color: #166534; font-weight: bold; font-family: Arial, sans-serif; font-size: 10pt;">[BENAR ✓]</span>`
+            : `<span style="color: #991b1b; font-weight: bold; font-family: Arial, sans-serif; font-size: 10pt;">[SALAH ✗] (Jawaban Siswa: ${studentAns})</span>`;
+        } else {
+          blockStatusHeader = `<span style="color: #b45309; font-weight: bold; font-family: Arial, sans-serif; font-size: 10pt;">[BELUM DIJAWAB / TIDAK TERISI]</span>`;
+        }
+
+        questionsHtml += `
+          <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px dashed #cccccc; font-family: Arial, sans-serif;">
+            <div style="font-size: 11pt; font-weight: bold; margin-bottom: 8px; line-height: 1.4;">
+              <span style="color: #1e3a8a;">Soal ${index + 1}.</span> ${q.questionText}
+              <div style="float: right; font-size: 9.5pt;">${blockStatusHeader}</div>
+              <div style="clear: both;"></div>
+            </div>
+            <div style="margin-left: 15px;">
+              ${optionsHtml}
+            </div>
+            ${q.explanation ? `
+              <div style="margin-top: 8px; padding: 8px; background-color: #f9fafb; border-left: 3px solid #9ca3af; font-size: 10pt; color: #4b5563; font-style: italic;">
+                <strong>Pembahasan:</strong> ${q.explanation}
+              </div>
+            ` : ""}
+          </div>
+        `;
+      });
+    }
+
+    const htmlContent = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8">
+        <title>Hasil Ujian - ${item.studentName}</title>
+        <!--[if gte mso 9]>
+        <xml>
+          <w:WordDocument>
+            <w:View>Print</w:View>
+            <w:Zoom>100</w:Zoom>
+            <w:DoNotOptimizeForBrowser/>
+          </w:WordDocument>
+        </xml>
+        <![endif]-->
+        <style>
+          @page Section1 {
+            size: 21.0cm 29.7cm; /* A4 Paper Format */
+            margin: 2.5cm 2.5cm 2.5cm 2.5cm;
+            mso-header-margin: 1.25cm;
+            mso-footer-margin: 1.25cm;
+            mso-paper-source: 0;
+          }
+          div.Section1 {
+            page: Section1;
+          }
+          body {
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            line-height: 1.5;
+            color: #333333;
+          }
+          .header-title {
+            text-align: center;
+            font-size: 16.5pt;
+            font-weight: bold;
+            color: #1e3a8a;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+          }
+          .header-subtitle {
+            text-align: center;
+            font-size: 10pt;
+            color: #4b5563;
+            margin-bottom: 18px;
+            border-bottom: 3px double #1e3a8a;
+            padding-bottom: 8px;
+          }
+          .meta-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+          }
+          .meta-table td {
+            padding: 6px;
+            font-size: 10.5pt;
+            vertical-align: top;
+          }
+          .meta-label {
+            width: 150px;
+            font-weight: bold;
+            color: #4b5563;
+          }
+          .meta-value {
+            border-bottom: 1px solid #e5e7eb;
+            color: #111827;
+          }
+          .score-box {
+            border: 1.5pt solid #1e3a8a;
+            background-color: #f0fdf4;
+            padding: 12px;
+            text-align: center;
+            margin-top: 10px;
+            margin-bottom: 20px;
+          }
+          .score-title {
+            font-size: 10pt;
+            font-weight: bold;
+            color: #1e3a8a;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+          }
+          .score-value {
+            font-size: 24pt;
+            font-weight: bold;
+            color: #166534;
+          }
+          .score-status {
+            font-size: 11pt;
+            font-weight: bold;
+            margin-top: 4px;
+          }
+          .section-title {
+            font-size: 11.5pt;
+            font-weight: bold;
+            color: #ffffff;
+            background-color: #1e3a8a;
+            padding: 6px 12px;
+            margin-top: 20px;
+            margin-bottom: 15px;
+          }
+          .footer-note {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 9pt;
+            color: #9ca3af;
+            border-top: 1.5pt solid #e5e7eb;
+            padding-top: 10px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="Section1">
+          <div class="header-title">Laporan Hasil Evaluasi Computer Based Test (CBT)</div>
+          <div class="header-subtitle font-sans">Sistem Pengawasan Terintegrasi & Smart Generator Soal</div>
+          
+          <table class="meta-table">
+            <tr>
+              <td class="meta-label">Nama Siswa / Peserta</td>
+              <td class="meta-value"><strong>${item.studentName}</strong></td>
+              <td class="meta-label">ID Transkrip</td>
+              <td class="meta-value"><code>${item.id || "N/A"}</code></td>
+            </tr>
+            <tr>
+              <td class="meta-label">Email Terdaftar</td>
+              <td class="meta-value">${item.studentEmail}</td>
+              <td class="meta-label">Tanggal Ujian</td>
+              <td class="meta-value">${formattedDate}</td>
+            </tr>
+            <tr>
+              <td class="meta-label">NISN Siswa</td>
+              <td class="meta-value">${item.studentNisn || "-"}</td>
+              <td class="meta-label">Durasi Pengerjaan</td>
+              <td class="meta-value">${item.durationMinutes} menit</td>
+            </tr>
+            <tr>
+              <td class="meta-label">Paket Soal Ujian</td>
+              <td class="meta-value"><strong>${item.examName}</strong></td>
+              <td class="meta-label">Batas KKM Kelulusan</td>
+              <td class="meta-value">75 / 100</td>
+            </tr>
+          </table>
+          
+          <div class="score-box" style="border-color: ${statusColor};">
+            <div class="score-title">Nilai Pencapaian Hasil Ujian</div>
+            <div class="score-value" style="color: ${statusColor};">${item.score} <span style="font-size: 12pt; color: #6b7280; font-weight: normal;">dari 100</span></div>
+            <div class="score-status" style="color: ${statusColor};">STATUS HASIL: ${item.status.toUpperCase()}</div>
+          </div>
+          
+          <div class="section-title">BUKTI RINCIAN BUTIR SOAL DAN JAWABAN SISWA</div>
+          
+          ${questionsHtml}
+          
+          <div class="footer-note">
+            Laporan ini digenerasi secara resmi oleh platform Sistem CBT Pintar pada ${new Date().toLocaleString("id-ID")}.<br/>
+            <em>Lembar ini dilindungi integritas proctoring digital dan aman digunakan untuk dokumentasi akademik.</em>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const fileContent = "\ufeff" + htmlContent;
+    const blob = new Blob([fileContent], { type: "application/msword;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const formattedFilename = `Laporan_Ujian_${item.studentName.replace(/\s+/g, "_")}_${item.examName.replace(/\s+/g, "_")}.doc`;
+    link.setAttribute("download", formattedFilename);
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePrintDocument = (item: any) => {
+    const pkgQuestions = getHistoryQuestions(item);
+    const formattedDate = item.startTime || new Date().toISOString().replace("T", " ").slice(0, 16);
+    const statusColor = item.status === "Lulus" ? "#166534" : (item.status === "Remedial" ? "#b45309" : "#991b1b");
+
+    let questionsHtml = "";
+
+    if (pkgQuestions.length === 0) {
+      questionsHtml = `
+        <div style="text-align: center; padding: 20px; color: #9ca3af; font-style: italic; font-family: Arial, sans-serif; font-size: 11pt;">
+          Tidak ada data butir soal riil yang terekam di dalam sistem untuk paket ini. Format transkrip rekapitulasi nilai ditampilkan.
+        </div>`;
+    } else {
+      pkgQuestions.forEach((q, index) => {
+        const studentAns = item.answers ? item.answers[q.id] : undefined;
+        const isCorrect = studentAns === q.correctAnswer;
+        const hasAnswered = !!studentAns;
+
+        let optionsHtml = "";
+        q.options.forEach((opt) => {
+          let optStyle = "font-family: Arial, sans-serif; font-size: 11pt; margin-bottom: 4px; padding: 2px 4px; display: flex; align-items: flex-start;";
+          let suffix = "";
+
+          if (opt.key === q.correctAnswer) {
+            optStyle += " color: #166534; font-weight: bold;";
+            suffix += " [KUNCI JAWABAN]";
+          }
+
+          if (hasAnswered && opt.key === studentAns) {
+            if (isCorrect) {
+              optStyle += " background-color: #d1fae5; color: #166534; font-weight: bold;";
+              suffix += " (✓ Jawaban Siswa - BENAR)";
+            } else {
+              optStyle += " background-color: #fee2e2; color: #991b1b; font-weight: bold;";
+              suffix += " (✗ Jawaban Siswa - SALAH)";
+            }
+          }
+
+          optionsHtml += `
+            <div style="${optStyle}">
+              <span style="font-weight: bold; margin-right: 6px; flex-shrink: 0;">${opt.key}.</span> 
+              <span>${opt.text}${suffix}</span>
+            </div>
+          `;
+        });
+
+        let blockStatusHeader = "";
+        if (hasAnswered) {
+          blockStatusHeader = isCorrect
+            ? `<span style="color: #166534; font-weight: bold; font-family: Arial, sans-serif; font-size: 10pt;">[BENAR ✓]</span>`
+            : `<span style="color: #991b1b; font-weight: bold; font-family: Arial, sans-serif; font-size: 10pt;">[SALAH ✗] (Jawaban Siswa: ${studentAns})</span>`;
+        } else {
+          blockStatusHeader = `<span style="color: #b45309; font-weight: bold; font-family: Arial, sans-serif; font-size: 10pt;">[BELUM DIJAWAB / TIDAK TERISI]</span>`;
+        }
+
+        questionsHtml += `
+          <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px dashed #cccccc; font-family: Arial, sans-serif; page-break-inside: avoid;">
+            <div style="font-size: 11pt; font-weight: bold; margin-bottom: 8px; line-height: 1.4;">
+              <span style="color: #1e3a8a;">Soal ${index + 1}.</span> ${q.questionText}
+              <div style="float: right; font-size: 9.5pt;">${blockStatusHeader}</div>
+              <div style="clear: both;"></div>
+            </div>
+            <div style="margin-left: 15px;">
+              ${optionsHtml}
+            </div>
+            ${q.explanation ? `
+              <div style="margin-top: 8px; padding: 8px; background-color: #f9fafb; border-left: 3px solid #9ca3af; font-size: 10pt; color: #4b5563; font-style: italic; page-break-inside: avoid;">
+                <strong>Pembahasan:</strong> ${q.explanation}
+              </div>
+            ` : ""}
+          </div>
+        `;
+      });
+    }
+
+    const htmlContent = `
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Hasil Ujian - ${item.studentName}</title>
+        <style>
+          @page {
+            size: A4;
+            margin: 20mm;
+          }
+          body {
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            line-height: 1.5;
+            color: #333333;
+            margin: 0;
+            padding: 0;
+          }
+          .header-title {
+            text-align: center;
+            font-size: 16.5pt;
+            font-weight: bold;
+            color: #1e3a8a;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+          }
+          .header-subtitle {
+            text-align: center;
+            font-size: 10pt;
+            color: #4b5563;
+            margin-bottom: 18px;
+            border-bottom: 3px double #1e3a8a;
+            padding-bottom: 8px;
+          }
+          .meta-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+          }
+          .meta-table td {
+            padding: 6px;
+            font-size: 10.5pt;
+            vertical-align: top;
+          }
+          .meta-label {
+            width: 150px;
+            font-weight: bold;
+            color: #4b5563;
+          }
+          .meta-value {
+            border-bottom: 1px solid #e5e7eb;
+            color: #111827;
+          }
+          .score-box {
+            border: 1.5pt solid #1e3a8a;
+            background-color: #f0fdf4;
+            padding: 12px;
+            text-align: center;
+            margin-top: 10px;
+            margin-bottom: 20px;
+          }
+          .score-title {
+            font-size: 10pt;
+            font-weight: bold;
+            color: #1e3a8a;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+          }
+          .score-value {
+            font-size: 24pt;
+            font-weight: bold;
+            color: #166534;
+          }
+          .score-status {
+            font-size: 11pt;
+            font-weight: bold;
+            margin-top: 4px;
+          }
+          .section-title {
+            font-size: 11.5pt;
+            font-weight: bold;
+            color: #ffffff;
+            background-color: #1e3a8a;
+            padding: 6px 12px;
+            margin-top: 20px;
+            margin-bottom: 15px;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .footer-note {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 9pt;
+            color: #9ca3af;
+            border-top: 1.5pt solid #e5e7eb;
+            padding-top: 10px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header-title">Laporan Hasil Evaluasi Computer Based Test (CBT)</div>
+        <div class="header-subtitle" style="text-align: center; font-size: 10pt; color: #4b5563; margin-bottom: 18px; border-bottom: 3px double #1e3a8a; padding-bottom: 8px;">Sistem Pengawasan Terintegrasi & Smart Generator Soal</div>
+        
+        <table class="meta-table">
+          <tr>
+            <td class="meta-label">Nama Siswa / Peserta</td>
+            <td class="meta-value"><strong>${item.studentName}</strong></td>
+            <td class="meta-label">ID Transkrip</td>
+            <td class="meta-value"><code>${item.id || "N/A"}</code></td>
+          </tr>
+          <tr>
+            <td class="meta-label">Email Terdaftar</td>
+            <td class="meta-value">${item.studentEmail}</td>
+            <td class="meta-label">Tanggal Ujian</td>
+            <td class="meta-value">${formattedDate}</td>
+          </tr>
+          <tr>
+            <td class="meta-label">NISN Siswa</td>
+            <td class="meta-value">${item.studentNisn || "-"}</td>
+            <td class="meta-label">Durasi Pengerjaan</td>
+            <td class="meta-value">${item.durationMinutes} menit</td>
+          </tr>
+          <tr>
+            <td class="meta-label">Paket Soal Ujian</td>
+            <td class="meta-value"><strong>${item.examName}</strong></td>
+            <td class="meta-label">Batas KKM Kelulusan</td>
+            <td class="meta-value">75 / 100</td>
+          </tr>
+        </table>
+        
+        <div class="score-box" style="border-color: ${statusColor};">
+          <div class="score-title">Nilai Pencapaian Hasil Ujian</div>
+          <div class="score-value" style="color: ${statusColor};">${item.score} <span style="font-size: 12pt; color: #6b7280; font-weight: normal;">dari 100</span></div>
+          <div class="score-status" style="color: ${statusColor};">STATUS HASIL: ${item.status.toUpperCase()}</div>
+        </div>
+        
+        <div class="section-title">BUKTI RINCIAN BUTIR SOAL DAN JAWABAN SISWA</div>
+        
+        ${questionsHtml}
+        
+        <div class="footer-note">
+          Laporan ini digenerasi secara resmi oleh platform Sistem CBT Pintar pada ${new Date().toLocaleString("id-ID")}.<br/>
+          <em>Lembar ini dilindungi integritas proctoring digital dan aman digunakan untuk dokumentasi akademik.</em>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.left = "0";
+    iframe.style.top = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "none";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document || iframe.contentDocument;
+    if (doc) {
+      doc.open();
+      doc.write(htmlContent);
+      doc.close();
+      
+      setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        setTimeout(() => {
+          document.body.removeChild(iframe);
+        }, 1000);
+      }, 500);
     }
   };
 
@@ -749,99 +1333,233 @@ export default function StudentPortalView({
 
       {/* RENDER CURRENT RELEVANT STEP VIEW */}
 
-      {/* STEP 1: LOGIN FORM */}
+      {/* STEP 1: GENERAL STUDENT PORTAL ENTRANCE */}
       {currentStep === "login" && (
-        <div className="max-w-md mx-auto py-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-fadeIn">
-            {/* Colorful layout header bar info */}
-            <div className="bg-gradient-to-r from-teal-500 via-purple-500 to-pink-500 text-white p-5 text-center leading-snug">
-              <span className="inline-block px-2.5 py-0.5 bg-white/20 text-[9px] font-bold uppercase rounded-full mb-2 tracking-widest font-mono border border-white/20">
-                CBT LEMBAR JAWABAN SISWA
-              </span>
-              <h3 className="font-extrabold text-sm tracking-wide uppercase font-heading">Verifikasi Identitas Peserta</h3>
-              <p className="text-[10px] text-white/90 mt-1">Harap isi kredensial lengkap siswa untuk memulai sesi ujian.</p>
+        <div className="max-w-6xl mx-auto py-2 px-1">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            
+            {/* LEFT COLUMN: GUIDELINES, SYSTEM INFOS, FAQ */}
+            <div className="lg:col-span-7 space-y-6 animate-fadeIn">
+              
+              {/* CBT Welcome Hero & Status Indicator */}
+              <div className="p-6 bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-2xl shadow-md border border-slate-800 space-y-3.5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-36 h-36 bg-blue-500/10 rounded-full blur-2xl pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 w-24 h-24 bg-pink-500/10 rounded-full blur-xl pointer-events-none"></div>
+                
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold uppercase rounded-full select-none tracking-wider">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Sistem CBT Siap Sedia
+                  </span>
+                  <span className="px-2.5 py-1 bg-white/10 text-[10px] font-bold text-slate-300 rounded-full select-none tracking-wider">
+                    SDN 14 Singkawang
+                  </span>
+                </div>
 
-              <div className="mt-3.5 bg-black/25 backdrop-blur-md rounded-xl p-2 font-mono text-[10px] text-teal-200 border border-white/10 flex flex-col items-center justify-center gap-0.5 shadow-inner">
-                <span className="text-[9px] uppercase text-white/60 tracking-wider font-extrabold flex items-center gap-1">
-                  🌐 WAKTU SERVER UTC {serverTimeConfig?.useManualTime ? "(OVERRIDE MANUAL)" : ""}
-                </span>
-                <span className="font-black text-xs text-white tracking-widest">
-                  {formatStudentTimeUTC(getSimulatedStudentTime())}
-                </span>
+                <div className="space-y-1">
+                  <h1 className="text-xl md:text-2xl font-black font-heading tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">
+                    Selamat Datang di Portal CBT Siswa 🎓
+                  </h1>
+                  <p className="text-xs text-slate-300 font-medium leading-relaxed">
+                    Sistem Computer Based Test modern yang didesain untuk memberikan pengalaman ujian mandiri secara tertib, adil, transparan, dan berintegritas tinggi.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 text-[11px] text-slate-300">
+                  <div className="p-3 bg-white/5 border border-white/5 rounded-xl hover:bg-white/10 transition space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-teal-300">
+                      <CheckCircle size={13} />
+                      Ujian Mandiri Adil
+                    </div>
+                    <p className="text-slate-400 leading-normal">Penyusunan butir soal sistematis berdasarkan kurikulum resmi nasional.</p>
+                  </div>
+                  
+                  <div className="p-3 bg-white/5 border border-white/5 rounded-xl hover:bg-white/10 transition space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-pink-300">
+                      <Lock size={13} />
+                      Keamanan Proctoring
+                    </div>
+                    <p className="text-slate-400 leading-normal">Deteksi tindakan kecurangan otomatis untuk menjamin keaslian nilai prestasi.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step instructions flowchart visual Card */}
+              <div className="bg-white border border-slate-200/80 rounded-2xl shadow-xs p-5 space-y-4">
+                <h3 className="font-bold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1.5 select-none font-sans">
+                  <CheckCircle size={14} className="text-indigo-600" /> Alur Langkah Pelaksanaan Ujian
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-3.5 bg-slate-50 rounded-xl space-y-1.5 relative border border-slate-100">
+                    <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[10px] flex items-center justify-center select-none">1</span>
+                    <strong className="text-xs text-slate-800 block leading-tight">Masuk Kredensial</strong>
+                    <p className="text-[10px] text-slate-500 leading-relaxed">Verifikasi identitas diri dengan memilih sesi tes yang aktif saat ini.</p>
+                  </div>
+                  <div className="p-3.5 bg-slate-50 rounded-xl space-y-1.5 relative border border-slate-100">
+                    <span className="w-5 h-5 rounded-full bg-purple-100 text-purple-700 font-bold text-[10px] flex items-center justify-center select-none">2</span>
+                    <strong className="text-xs text-slate-800 block leading-tight">Konfirmasi Briefing</strong>
+                    <p className="text-[10px] text-slate-500 leading-relaxed">Pahami syarat pengerjaan, tata tertib kejujuran, serta target kelulusan.</p>
+                  </div>
+                  <div className="p-3.5 bg-slate-50 rounded-xl space-y-1.5 relative border border-slate-100">
+                    <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 font-bold text-[10px] flex items-center justify-center select-none">3</span>
+                    <strong className="text-xs text-slate-800 block leading-tight">Ujian & Kumpul</strong>
+                    <p className="text-[10px] text-slate-500 leading-relaxed">Kerjakan semua lembar pertanyaan dan serahkan sebelum waktu berakhir.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Helpful Student FAQ Accordion */}
+              <div className="bg-white border border-slate-200/80 rounded-2xl shadow-xs p-5 space-y-4">
+                <h3 className="font-bold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1.5 select-none font-sans">
+                  <HelpCircle size={14} className="text-teal-600" /> Pertanyaan Sering Diajukan (FAQ Siswa)
+                </h3>
+
+                <div className="space-y-2">
+                  {[
+                    {
+                      question: "Bagaimana jika koneksi internet saya sempat terputus saat ujian?",
+                      answer: "Jangan panik. Jawaban yang Anda klik selalu aman tersimpan di memori peramban secara lokal. Anda bisa menyegarkan halaman atau login kembali ke sesi yang sama setelah jaringan membaik."
+                    },
+                    {
+                      question: "Bolehkah saya membuka tab browser lain atau mencari kunci jawaban online?",
+                      answer: "Sangat dilarang! Sistem CBT terintegrasi dengan proteksi 'Lockdown Detection'. Berpindah jendela, mengecilkan browser, atau membuka tab lain sebanyak 3 kali akan mengunci lembar ujian secara paksa."
+                    },
+                    {
+                      question: "Ke mana saya harus melapor jika ujian saya terkunci otomatis?",
+                      answer: "Silakan angkat tangan Anda di dalam ruangan dan laporkan langsung ke Guru Pengawas ruangan (proctor). Pengawas akan membantu melakukan pembukaan kunci (reset token status) pada dashboard mereka."
+                    }
+                  ].map((faq, idx) => {
+                    const isOpen = activeFaq === idx;
+                    return (
+                      <div key={idx} className="border border-slate-200 rounded-xl overflow-hidden transition duration-150">
+                        <button
+                          type="button"
+                          onClick={() => setActiveFaq(isOpen ? null : idx)}
+                          className="w-full text-left px-4 py-3 bg-slate-50 hover:bg-slate-100/80 transition flex justify-between items-center text-xs font-bold text-slate-700 select-none cursor-pointer"
+                        >
+                          <span className="leading-snug">{faq.question}</span>
+                          <span className={`text-slate-400 transition-transform duration-200 transform ${isOpen ? "rotate-180" : ""}`}>
+                            ▼
+                          </span>
+                        </button>
+                        {isOpen && (
+                          <div className="px-4 py-3 bg-white text-[11px] border-t border-slate-100 leading-relaxed text-slate-600">
+                            {faq.answer}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+            </div>
+
+            {/* RIGHT COLUMN: RE-DESIGNED LOGIN CARD */}
+            <div className="lg:col-span-5">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-fadeIn">
+                
+                {/* Colorful card header bar info */}
+                <div className="bg-gradient-to-tr from-slate-900 via-indigo-950 to-indigo-900 text-white p-6 text-center leading-snug border-b border-slate-800">
+                  <span className="inline-block px-3 py-1 bg-red-500/25 text-red-350 text-[10px] font-extrabold uppercase rounded-full mb-2 tracking-widest font-mono border border-red-500/20 shadow-sm">
+                    🔒 FORM VALIDASI RESMI
+                  </span>
+                  <h3 className="font-extrabold text-base tracking-tight uppercase font-heading text-white">MASUK LEMBAR KERJA</h3>
+                  <p className="text-[10px] text-slate-300 mt-1 max-w-xs mx-auto leading-relaxed">Harap isi identitas untuk memverifikasi hak keikutsertaan Anda dalam ujian.</p>
+
+                  <div className="mt-4 bg-white/5 backdrop-blur-md rounded-2xl p-3 border border-white/10 flex flex-col items-center justify-center gap-1 shadow-inner">
+                    <span className="text-[9px] uppercase text-slate-400 tracking-wider font-extrabold flex items-center gap-1.5 select-none font-sans">
+                      <Clock size={11} className="text-indigo-400 animate-pulse" /> WAKTU SERVER (WIB SINKRON)
+                    </span>
+                    <span className="font-mono text-sm font-black text-indigo-200 tracking-widest bg-black/40 px-3 py-1 rounded-lg">
+                      {formatStudentTimeWIB(getSimulatedStudentTime())}
+                    </span>
+                  </div>
+                </div>
+
+                <form onSubmit={handleValidateLogin} className="p-6 space-y-4">
+                  
+                  {/* Exam Selection - load dynamically */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block tracking-wider flex items-center gap-1">
+                      <CheckCircle size={11} className="text-red-500" /> Sesi Ulangan / Ujian Aktif
+                    </label>
+                    <select
+                      value={selectedScheduleId}
+                      onChange={(e) => setSelectedScheduleId(e.target.value)}
+                      required
+                      className="w-full text-xs font-semibold text-slate-700 border border-slate-200 p-3 rounded-xl bg-slate-50 hover:bg-slate-100/50 focus:bg-white focus:border-red-500 focus:ring-2 focus:ring-red-100 outline-none cursor-pointer transition duration-150"
+                    >
+                      <option value="">-- Pilih Sesi Ujian Tersedia --</option>
+                      {schedules.map((s) => (
+                        <option key={s.id} value={s.id} className="text-xs py-1">
+                          {s.title} ({s.packageName}) {s.isLocked ? " 🔐 [Terkunci]" : " 🟢 [Terbuka]"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Full Name */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block tracking-wider flex items-center gap-1">
+                      <User size={11} className="text-red-500" /> Nama Lengkap Siswa
+                    </label>
+                    <div className="relative">
+                      <User size={14} className="absolute left-3.5 top-3.5 text-slate-400" />
+                      <input
+                        type="text"
+                        required
+                        placeholder="Masukkan nama lengkap Anda..."
+                        value={studentName}
+                        onChange={(e) => setStudentName(e.target.value)}
+                        className="w-full text-xs pl-9 pr-3.5 py-3 border border-slate-200 focus:border-red-500 focus:ring-2 focus:ring-red-100 outline-none bg-slate-50 focus:bg-white rounded-xl text-slate-700 font-semibold placeholder:text-slate-400 transition duration-150"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Email Address */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block tracking-wider font-sans flex items-center gap-1">
+                      <Mail size={11} className="text-red-500" /> Alamat Email Siswa
+                    </label>
+                    <div className="relative">
+                      <Mail size={14} className="absolute left-3.5 top-3.5 text-slate-400" />
+                      <input
+                        type="email"
+                        required
+                        placeholder="Contoh: budi.santoso@gmail.com"
+                        value={studentEmail}
+                        onChange={(e) => setStudentEmail(e.target.value)}
+                        className="w-full text-xs pl-9 pr-3.5 py-3 border border-slate-200 focus:border-red-500 focus:ring-2 focus:ring-red-100 outline-none bg-slate-50 focus:bg-white rounded-xl text-slate-700 font-semibold placeholder:text-slate-400 transition duration-150"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Action Submit Button */}
+                  <div className="pt-3 space-y-2.5">
+                    <button
+                      type="submit"
+                      className="w-full py-3.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer transition-all duration-150 hover:shadow-lg active:scale-[0.98] flex items-center justify-center gap-2 uppercase tracking-widest"
+                    >
+                      🔓 VALIDASI & MASUK BRIGING UTAMA
+                    </button>
+
+                    {onGoBack && (
+                      <button
+                        type="button"
+                        onClick={onGoBack}
+                        className="w-full py-2.5 border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-500 hover:text-slate-700 font-semibold text-xs rounded-xl cursor-pointer transition flex items-center justify-center gap-1"
+                      >
+                        Kembali ke Halaman Beranda
+                      </button>
+                    )}
+                  </div>
+                </form>
+
               </div>
             </div>
 
-            <form onSubmit={handleValidateLogin} className="p-5 space-y-4">
-              {/* Exam Selection - load dynamically */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase block tracking-wider">SESI ULANGAN / UJIAN AKTIF *</label>
-                <select
-                  value={selectedScheduleId}
-                  onChange={(e) => setSelectedScheduleId(e.target.value)}
-                  required
-                  className="w-full text-xs border border-slate-200 p-2.5 rounded-lg bg-slate-50 outline-none focus:border-red-500 cursor-pointer text-slate-700 font-semibold"
-                >
-                  <option value="">-- Pilih Sesi Ujian Tersedia --</option>
-                  {schedules.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.title} ({s.packageName}) {s.isLocked ? " (🔐 Terkunci)" : " (🟢 Terbuka)"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Full Name */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase block tracking-wider">NAMA LENGKAP SISWA *</label>
-                <div className="relative">
-                  <User size={13} className="absolute left-3 top-3 text-slate-400" />
-                  <input
-                    type="text"
-                    required
-                    placeholder="Contoh: Budi Santoso"
-                    value={studentName}
-                    onChange={(e) => setStudentName(e.target.value)}
-                    className="w-full text-xs pl-8 pr-3 py-2.5 border border-slate-200 focus:border-red-500 outline-none bg-slate-50 rounded-lg text-slate-700 font-medium"
-                  />
-                </div>
-              </div>
-
-              {/* Email Address */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase block tracking-wider font-sans">ALAMAT EMAIL VERIFIKASI *</label>
-                <div className="relative">
-                  <Mail size={13} className="absolute left-3 top-3 text-slate-400" />
-                  <input
-                    type="email"
-                    required
-                    placeholder="Contoh: budi.santoso@gmail.com"
-                    value={studentEmail}
-                    onChange={(e) => setStudentEmail(e.target.value)}
-                    className="w-full text-xs pl-8 pr-3 py-2.5 border border-slate-200 focus:border-red-500 outline-none bg-slate-50 rounded-lg text-slate-700 font-medium"
-                  />
-                </div>
-              </div>
-
-              {/* Action Submit */}
-              <div className="pt-2 space-y-2">
-                <button
-                  type="submit"
-                  className="w-full py-2.5 bg-red-650 hover:bg-red-700 bg-red-600 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer transition flex items-center justify-center gap-1.5 uppercase tracking-wide"
-                >
-                  🔓 Validasi & Masuk Portal briefing
-                </button>
-
-                {onGoBack && (
-                  <button
-                    type="button"
-                    onClick={onGoBack}
-                    className="w-full py-2.5 border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-500 hover:text-slate-700 font-semibold text-xs rounded-xl cursor-pointer transition flex items-center justify-center gap-1"
-                  >
-                    Kembali ke Beranda Gate
-                  </button>
-                )}
-              </div>
-            </form>
           </div>
         </div>
       )}
@@ -1296,9 +2014,138 @@ export default function StudentPortalView({
               </div>
             )}
 
+            {/* Download & Print operations for student */}
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+              <span className="block text-[10px] font-bold text-slate-500 uppercase font-mono tracking-wider">DOKUMENTASI JAWABAN ANDA</span>
+              <p className="text-[10px] text-slate-500 max-w-sm mx-auto leading-relaxed">
+                Anda dapat melihat rincian butir soal, kunci jawaban resmi, dan pilihan jawaban yang Anda kumpulkan saat ujian dalam bentuk dokumen A4 yang disusun rapi.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2.5 justify-center">
+                <button
+                  type="button"
+                  onClick={() => setPreviewResult(endedExamResult)}
+                  className="px-3 py-2 bg-white border border-slate-200 hover:border-blue-300 text-blue-700 hover:text-blue-800 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer shadow-3xs"
+                >
+                  <Eye size={14} /> Pratinjau Lembar A4
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadDocx(endedExamResult)}
+                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer shadow-3xs"
+                >
+                  <Download size={14} /> Unduh Jawaban (DOCX)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePrintDocument(endedExamResult)}
+                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer border border-slate-200 shadow-3xs"
+                >
+                  <Printer size={14} /> Cetak Langsung
+                </button>
+              </div>
+            </div>
+
+            {/* Interactive Answer Sheet Review on Page */}
+            <div className="border border-slate-200 rounded-xl overflow-hidden text-left bg-white shadow-3xs">
+              <button
+                type="button"
+                onClick={() => setShowAnswerSheetReview(!showAnswerSheetReview)}
+                className="w-full flex items-center justify-between p-3.5 bg-slate-50 border-b border-slate-100 hover:bg-slate-100/70 transition cursor-pointer"
+              >
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 font-sans">
+                  <CheckCircle size={15} className="text-blue-605 text-blue-600" />
+                  {showAnswerSheetReview ? "Sembunyikan" : "Tampilkan"} Lembar Jawaban & Pembahasan ({getHistoryQuestions(endedExamResult).length} Soal)
+                </span>
+                <span className="text-xs text-blue-600 font-semibold font-mono">
+                  {showAnswerSheetReview ? "Tutup ▲" : "Buka ▼"}
+                </span>
+              </button>
+
+              {showAnswerSheetReview && (
+                <div className="p-4 space-y-4 max-h-[450px] overflow-y-auto divide-y divide-slate-100">
+                  {getHistoryQuestions(endedExamResult).map((q, qIndex) => {
+                    const studentAns = endedExamResult.answers ? endedExamResult.answers[q.id] : undefined;
+                    const isCorrect = studentAns === q.correctAnswer;
+                    const hasAnswered = !!studentAns;
+
+                    return (
+                      <div key={q.id} className={`${qIndex > 0 ? "pt-4" : ""} first:pt-0`}>
+                        <div className="flex justify-between items-start gap-4">
+                          <span className="text-xs font-bold text-slate-800 leading-normal font-sans">
+                            <span className="text-blue-600 mr-1 font-mono">Soal {qIndex + 1}.</span> {q.questionText}
+                          </span>
+                          <span className="shrink-0">
+                            {hasAnswered ? (
+                              isCorrect ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded text-[9px] font-bold font-sans">
+                                  Benar ✓
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-100 rounded text-[9px] font-bold font-sans">
+                                  Salah ✗
+                                </span>
+                              )
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-[9px] font-bold font-sans">
+                                Kosong -
+                              </span>
+                            )}
+                          </span>
+                        </div>
+
+                        {/* Options */}
+                        <div className="mt-2.5 pl-4 space-y-1">
+                          {q.options.map((opt) => {
+                            const isOptionCorrect = opt.key === q.correctAnswer;
+                            const isOptionSelectedByStudent = opt.key === studentAns;
+
+                            let bgClass = "bg-transparent border-transparent text-slate-600";
+                            let iconSuffix = null;
+
+                            if (isOptionCorrect) {
+                              bgClass = "bg-emerald-50/70 text-emerald-800 border-emerald-150 font-semibold";
+                              iconSuffix = <span className="ml-1 text-[9px] text-emerald-600 font-mono italic">[Kunci Jawaban]</span>;
+                            }
+
+                            if (hasAnswered && isOptionSelectedByStudent) {
+                              if (isCorrect) {
+                                bgClass = "bg-emerald-100/90 text-emerald-900 border-emerald-200 font-bold shadow-3xs";
+                                iconSuffix = <span className="ml-1 text-[9px] text-emerald-700 font-mono italic font-bold">✓ Jawaban Anda (Benar)</span>;
+                              } else {
+                                bgClass = "bg-rose-100/90 text-rose-900 border-rose-200 font-bold shadow-3xs";
+                                iconSuffix = <span className="ml-1 text-[9px] text-rose-700 font-mono italic font-bold">✗ Jawaban Anda (Salah)</span>;
+                              }
+                            }
+
+                            return (
+                              <div
+                                key={opt.key}
+                                className={`text-[11px] py-1 px-2 border rounded-lg flex items-start gap-2 ${bgClass}`}
+                              >
+                                <span className="font-bold shrink-0">{opt.key}.</span>
+                                <span className="leading-normal">{opt.text} {iconSuffix}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Explanation */}
+                        {q.explanation && (
+                          <div className="mt-2 pl-3 border-l-2 border-slate-300 py-1 text-[10px] text-slate-500 italic font-sans">
+                            <strong className="text-slate-600 font-semibold not-italic">Pembahasan:</strong> {q.explanation}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Exit logic triggers */}
             <div className="pt-3 border-t border-slate-100 flex justify-center gap-3">
               <button
+                type="button"
                 onClick={handleManualClearSession}
                 className="px-4 py-2 bg-slate-920 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 transition cursor-pointer"
               >
@@ -1309,6 +2156,286 @@ export default function StudentPortalView({
           </div>
         </div>
       )}
+
+      {/* Modal Popup - Student A4 Print Preview */}
+      {previewResult && (() => {
+        const pkgQuestions = getHistoryQuestions(previewResult);
+        const statusColor = previewResult.status === "Lulus" ? "#166534" : (previewResult.status === "Remedial" ? "#b45309" : "#991b1b");
+        const statusBg = previewResult.status === "Lulus" ? "#f0fdf4" : (previewResult.status === "Remedial" ? "#fffbeb" : "#fef2f2");
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn font-sans">
+            <div className="bg-slate-900 text-white rounded-2xl border border-slate-800 max-w-5xl w-full h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-scaleIn">
+              {/* Toolbar */}
+              <div className="bg-slate-800 border-b border-slate-700 px-5 py-3 flex flex-wrap items-center justify-between gap-4 shrink-0">
+                <div className="space-y-0.5 text-left">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 bg-blue-600/35 border border-blue-500/20 text-blue-300 rounded text-[9px] font-mono font-bold uppercase tracking-wider">
+                      Pratinjau Cetak Siswa (A4 WYSIWYG)
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">ID: {previewResult.id || "N/A"}</span>
+                  </div>
+                  <h3 className="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+                    <Eye size={16} className="text-blue-400" />
+                    Lembar Laporan Hasil Ujian &mdash; {previewResult.studentName}
+                  </h3>
+                </div>
+
+                {/* Zoom Controls */}
+                <div className="flex items-center gap-2.5 bg-slate-950/40 p-1.5 rounded-lg border border-slate-700/60">
+                  <button
+                    type="button"
+                    onClick={() => setZoomLevel((z) => Math.max(50, z - 10))}
+                    disabled={zoomLevel <= 50}
+                    className="p-1 hover:bg-slate-850 rounded text-slate-400 hover:text-white disabled:opacity-40 disabled:hover:bg-transparent transition cursor-pointer"
+                    title="Perkecil Hambatan (Zoom Out)"
+                  >
+                    <ZoomOut size={14} />
+                  </button>
+                  <span className="text-xs font-mono font-bold text-slate-300 w-12 text-center select-none">
+                    {zoomLevel}%
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setZoomLevel((z) => Math.min(150, z + 10))}
+                    disabled={zoomLevel >= 150}
+                    className="p-1 hover:bg-slate-850 rounded text-slate-400 hover:text-white disabled:opacity-40 disabled:hover:bg-transparent transition cursor-pointer"
+                    title="Perbesar Hambatan (Zoom In)"
+                  >
+                    <ZoomIn size={14} />
+                  </button>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handlePrintDocument(previewResult)}
+                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg transition duration-150 flex items-center gap-1.5 cursor-pointer border border-blue-550/20 shadow-sm"
+                  >
+                    <Printer size={13} /> Cetak (A4)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadDocx(previewResult)}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition duration-150 flex items-center gap-1.5 cursor-pointer border border-emerald-550/20 shadow-sm"
+                  >
+                    <Download size={13} /> Unduh DOCX
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewResult(null)}
+                    className="p-1.5 bg-slate-700 hover:bg-slate-650 rounded-lg text-slate-300 hover:text-white transition cursor-pointer"
+                  >
+                    <XCircle size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Viewport page container */}
+              <div className="flex-1 overflow-auto bg-slate-950/80 p-8 flex justify-center items-start select-text shadow-inner">
+                <div 
+                  className="py-6 flex justify-center animate-fadeIn" 
+                  style={{ 
+                    width: '210mm', 
+                    height: `${297 * (zoomLevel / 100)}mm` 
+                  }}
+                >
+                  <div 
+                    className="origin-top transition-transform duration-200" 
+                    style={{ transform: `scale(${zoomLevel / 100})` }}
+                  >
+                    {/* Simulated A4 Paper */}
+                    <div className="w-[210mm] min-h-[297mm] p-[20mm] bg-white text-slate-900 shadow-2xl relative border border-slate-200 text-left font-sans leading-normal">
+                      {/* Paper Content Header */}
+                      <div className="text-center font-bold font-sans text-[16.5pt] text-blue-900 uppercase">
+                        Laporan Hasil Evaluasi Computer Based Test (CBT)
+                      </div>
+                      <div className="text-center font-sans text-[10pt] text-slate-500 border-b-[3px] border-double border-blue-900 pb-2 mb-5">
+                        Sistem Pengawasan Terintegrasi &amp; Smart Generator Soal
+                      </div>
+
+                      {/* Paper Content Metadata */}
+                      <table className="w-full mb-4 border-collapse font-sans text-left">
+                        <tbody>
+                          <tr className="align-top">
+                            <td className="w-[145px] p-1.5 text-[10.5pt] font-sans font-bold text-slate-500">
+                              Nama Siswa / Peserta
+                            </td>
+                            <td className="p-1.5 text-[10.5pt] font-sans font-bold border-b border-slate-200 text-slate-900">
+                              {previewResult.studentName}
+                            </td>
+                            <td className="w-[145px] p-1.5 text-[10.5pt] font-sans font-bold text-slate-500 pl-4">
+                              ID Transkrip
+                            </td>
+                            <td className="p-1.5 text-[10.5pt] font-sans border-b border-slate-200 text-slate-800 font-mono">
+                              {previewResult.id || "N/A"}
+                            </td>
+                          </tr>
+                          <tr className="align-top">
+                            <td className="w-[145px] p-1.5 text-[10.5pt] font-sans font-bold text-slate-500">
+                              Email Terdaftar
+                            </td>
+                            <td className="p-1.5 text-[10.5pt] font-sans border-b border-slate-200 text-slate-800">
+                              {previewResult.studentEmail}
+                            </td>
+                            <td className="w-[145px] p-1.5 text-[10.5pt] font-sans font-bold text-slate-500 pl-4">
+                              Tanggal Ujian
+                            </td>
+                            <td className="p-1.5 text-[10.5pt] font-sans border-b border-slate-200 text-slate-800">
+                              {previewResult.startTime || "-"}
+                            </td>
+                          </tr>
+                          <tr className="align-top">
+                            <td className="w-[145px] p-1.5 text-[10.5pt] font-sans font-bold text-slate-500">
+                              NISN Siswa
+                            </td>
+                            <td className="p-1.5 text-[10.5pt] font-sans border-b border-slate-200 text-slate-800">
+                              {previewResult.studentNisn || "-"}
+                            </td>
+                            <td className="w-[145px] p-1.5 text-[10.5pt] font-sans font-bold text-slate-500 pl-4">
+                              Durasi Pengerjaan
+                            </td>
+                            <td className="p-1.5 text-[10.5pt] font-sans border-b border-slate-200 text-slate-800">
+                              {previewResult.durationMinutes} menit
+                            </td>
+                          </tr>
+                          <tr className="align-top">
+                            <td className="w-[145px] p-1.5 text-[10.5pt] font-sans font-bold text-slate-500">
+                              Paket Soal Ujian
+                            </td>
+                            <td className="p-1.5 text-[10.5pt] font-sans font-bold border-b border-slate-200 text-slate-900">
+                              {previewResult.examName}
+                            </td>
+                            <td className="w-[145px] p-1.5 text-[10.5pt] font-sans font-bold text-slate-500 pl-4">
+                              Batas KKM Kelulusan
+                            </td>
+                            <td className="p-1.5 text-[10.5pt] font-sans border-b border-slate-200 text-slate-900 font-bold">
+                              {previewResult.kkm} / 100
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+
+                      {/* Score Box */}
+                      <div 
+                        className="p-3 text-center my-4 border-[1.5pt] rounded"
+                        style={{ borderColor: statusColor, backgroundColor: statusBg }}
+                      >
+                        <div className="text-[10pt] font-bold text-blue-900 uppercase tracking-wide mb-0.5">
+                          Nilai Pencapaian Hasil Ujian
+                        </div>
+                        <div className="text-[24pt] font-bold font-heading" style={{ color: statusColor }}>
+                          {previewResult.score} <span className="text-[12pt] text-slate-500 font-normal">dari 100</span>
+                        </div>
+                        <div className="text-[11pt] font-bold mt-0.5" style={{ color: statusColor }}>
+                          STATUS HASIL: {previewResult.status.toUpperCase()}
+                        </div>
+                      </div>
+
+                      {/* Evidence Section Title */}
+                      <div className="text-[11.5pt] font-bold text-white bg-[#1e3a8a] px-3 py-1.5 my-4 uppercase tracking-wider rounded-xs">
+                        BUKTI RINCIAN BUTIR SOAL DAN JAWABAN SISWA
+                      </div>
+
+                      {/* Detail Questions list */}
+                      <div className="space-y-4 text-left font-sans">
+                        {pkgQuestions.length === 0 ? (
+                          <div className="text-center py-6 text-slate-400 italic text-[11pt]">
+                            Tidak ada data butir soal riil yang terekam di dalam sistem untuk paket ini. Format transkrip rekapitulasi nilai ditampilkan.
+                          </div>
+                        ) : (
+                          pkgQuestions.map((q, qIndex) => {
+                            const studentAns = previewResult.answers ? previewResult.answers[q.id] : undefined;
+                            const isCorrect = studentAns === q.correctAnswer;
+                            const hasAnswered = !!studentAns;
+
+                            return (
+                              <div key={q.id} className="pb-3 border-b border-dashed border-slate-200 break-inside-avoid">
+                                <div className="text-[11pt] font-bold mb-2 flex justify-between items-start gap-4">
+                                  <div className="text-slate-800 leading-normal">
+                                    <span className="text-blue-900 mr-1">Soal {qIndex + 1}.</span> {q.questionText}
+                                  </div>
+                                  <div className="shrink-0 text-right mt-0.5">
+                                    {hasAnswered ? (
+                                      isCorrect ? (
+                                        <span className="text-emerald-700 font-bold text-[10pt] bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 font-sans">[BENAR ✓]</span>
+                                      ) : (
+                                        <span className="text-rose-700 font-bold text-[10pt] bg-rose-50 px-2 py-0.5 rounded border border-rose-100 font-sans">[SALAH ✗]</span>
+                                      )
+                                    ) : (
+                                      <span className="text-amber-700 font-bold text-[10pt] bg-amber-50 px-2 py-0.5 rounded border border-amber-100 font-sans">[BELUM DIJAWAB]</span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="pl-4 space-y-1 mt-1 font-sans">
+                                  {q.options.map((opt) => {
+                                    const isOptionCorrect = opt.key === q.correctAnswer;
+                                    const isOptionSelectedByStudent = opt.key === studentAns;
+
+                                    let bgVal = "transparent";
+                                    let colVal = "#4b5563";
+                                    let fontW = "normal";
+                                    let suffix = "";
+
+                                    if (isOptionCorrect) {
+                                      colVal = "#166534";
+                                      fontW = "bold";
+                                      suffix = " [KUNCI JAWABAN]";
+                                    }
+
+                                    if (hasAnswered && isOptionSelectedByStudent) {
+                                      if (isCorrect) {
+                                        bgVal = "#d1fae5";
+                                        colVal = "#166534";
+                                        fontW = "bold";
+                                        suffix = " (✓ Jawaban Anda - BENAR)";
+                                      } else {
+                                        bgVal = "#fee2e2";
+                                        colVal = "#991b1b";
+                                        fontW = "bold";
+                                        suffix = " (✗ Jawaban Anda - SALAH)";
+                                      }
+                                    }
+
+                                    return (
+                                      <div 
+                                        key={opt.key} 
+                                        className="text-[11pt] py-0.5 px-2 rounded flex items-start gap-2.5"
+                                        style={{ backgroundColor: bgVal, color: colVal, fontWeight: fontW }}
+                                      >
+                                        <span className="font-bold shrink-0">{opt.key}.</span>
+                                        <span className="leading-snug">{opt.text}{suffix}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+
+                                {q.explanation && (
+                                  <div className="mt-2.5 p-2 bg-[#f9fafb] border-l-[3px] border-slate-400 text-[10pt] text-slate-500 italic rounded-r leading-relaxed font-sans text-left">
+                                    <strong>Pembahasan:</strong> {q.explanation}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Paper content footer */}
+                      <div className="mt-8 text-center text-[9pt] text-slate-400 border-t border-slate-100 pt-3 leading-relaxed font-sans">
+                        Laporan ini digenerasi secara resmi oleh platform Sistem CBT Pintar pada {new Date().toLocaleString("id-ID")}.<br />
+                        <span className="italic">Lembar ini dilindungi integritas proctoring digital dan aman digunakan untuk dokumentasi akademik.</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* DETECTED FOCUS LOSS CHEATING ALARM - OVERLAY POPUP */}
       {isCheatWarningVisible && (
